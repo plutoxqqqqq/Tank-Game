@@ -5,6 +5,26 @@ All notable changes to Tank Game Rebirth, newest first.
 > Tank Game — a top-down survival shooter in Pygame. Asset-free (all visuals are shapes) and
 > audio-optional, with a fallback-safe sound layer.
 
+## Liquid-glass UI, logic fixes, anti-cheat expansion
+
+- **New UI.** `tankgame/ui/glass.py` is a small liquid-glass toolkit (frosted panels with a
+  specular edge, soft shadows, animated pill buttons, segmented tabs, rounded bars, badges, a
+  blurred backdrop for modal screens, drawn icons for glyphs the default font lacks). Every screen,
+  the HUD and the arena art were redone on it. Layouts size from the viewport, so nothing overlaps
+  or clips from 700px wide up to ultra-wide; labels shrink to fit. Text, bars and panels are
+  cached, cutting HUD cost from ~2.2ms to ~0.5ms per frame.
+- **Logic fixes.** Bosses can no longer be charmed (a permanently charmed boss stalled the whole
+  run). Blitz keeps its fast spawn rate instead of being reset on the first frame. Health packs
+  stay on the floor at full HP. Far-away XP orbs merge past a soft cap (XP kept). Ground-fire kills
+  credit mastery; charmed-ally rounds no longer trigger your chains or executions. Restore Defaults
+  resets damage numbers too.
+- **Anti-cheat expansion.** Yes/no authorisation flags were replaced with exact grants, so forging a
+  flag buys nothing. Added kill provenance, pre-flight round-speed checks, NaN/infinity sanity
+  guards, many new bounds and a sliding-window fire-rate cap; integrity now covers projectile
+  physics, enemy rules and the damage gate, and tampering with the referee is reported. Impostor
+  player objects are rejected and save changes can no longer launder through a run restart.
+  Fixed two false positives in the old referee (dashing into cover; settling a death).
+
 ## Inject polish: working menu, clean input, tidy repo
 
 - **The injected menu works again.** The base-game AntiCheat restored every hooked method and

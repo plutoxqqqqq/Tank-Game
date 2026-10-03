@@ -24,7 +24,6 @@ class MenuScreenMixin:
     def draw_menu(self, events):
         glass.background(self.screen)
         cx = WIDTH // 2
-        t = time.time()
         self.refresh_challenges()
 
         # Title with a soft animated glow and a gradient rule beneath it.
