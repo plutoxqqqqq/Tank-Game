@@ -72,10 +72,22 @@ python inject.py  # terminal 2
 
 `inject.py` finds the game process, calls `install()` inside it, and paints the menu onto the
 existing frame (RightShift / F1 toggles it). Because nothing is written to the source, restarting
-`main.py` always gives you the legit game again until you inject. Requires `psutil` and `pywin32`.
+`main.py` always gives you the legit game again until you inject. Windows, 64-bit Python only, and
+`inject.py` must run on the same Python version as the game. Requires `psutil` and `pywin32`.
+Pass `--pid N` to target a specific process.
+
+While the menu is open it owns the keyboard and mouse, so clicks and ESC never fall through to the
+game underneath. The **Uninject** action removes every hook, restores the player's real stats,
+deletes `.inject_cfg` and the cached bytecode, and hands control back to the anti-cheat.
 
 The base game ships with a small, cheat-agnostic anti-cheat (`game/anticheat.py`). It inspects live
 game state against the engine's own rules — rule-method integrity, stat baselines, bounds, speed,
 dash/fire, damage accounting, vitals, world and progression provenance — and reverts anything the
 engine could not have produced, no matter how the cheat is delivered. It only prevents; it never
 kills the player.
+
+While injected, `inject.py` stands that referee down from the outside without editing
+`anticheat.py`: it swaps the `run_guard`/`run_tick` entry points that `game/app.py` calls for quiet
+stand-ins, makes the referee's shot/dash gates allow everything, and lifts its zero-knockback damage
+hook. Uninject restores all three and re-baselines the referee, so the rest of the session is
+policed again.

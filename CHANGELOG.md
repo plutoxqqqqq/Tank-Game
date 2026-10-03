@@ -5,6 +5,30 @@ All notable changes to Tank Game Rebirth, newest first.
 > Tank Game — a top-down survival shooter in Pygame. Asset-free (all visuals are shapes) and
 > audio-optional, with a fallback-safe sound layer.
 
+## Inject polish: working menu, clean input, tidy repo
+
+- **The injected menu works again.** The base-game AntiCheat restored every hooked method and
+  reverted every module within a frame, so the menu drew but did nothing. `inject.py` now stands
+  the referee down from the outside while it is installed (`anticheat.py` is untouched): the
+  `run_guard`/`run_tick` entry points in `game/app.py` are swapped for quiet stand-ins, the
+  referee's `allow_shot`/`allow_dash` gates wave everything through, and the zero-knockback damage
+  hook is lifted so Aura lands. Uninject restores all of it and calls `AntiCheat.reset()`, so the
+  rest of the session is policed again with nothing flagged.
+- **No more click-through.** While the menu is open (and on the frame that closes it) keyboard and
+  mouse events are kept from the game, so clicking a module no longer presses the button under it
+  and closing the menu with ESC no longer pauses the run or quits from the main menu. Closing the
+  window still works with the menu open.
+- **Real upgrades survive module toggles.** `Player.apply_effects` is wrapped so a card picked while
+  a module overlays the same stat lands on the legit value; turning the module off no longer wipes it.
+- **Uninject is clean.** It no longer re-applies the overlay on the same frame (which left
+  `_tinj_base_*` fields on the player), and it is a no-op when nothing is installed.
+- **Injector.** A clear message when the game runs on a different Python than `inject.py`, the
+  bootstrap no longer stacks duplicate `sys.path` entries on re-inject, a bad slider value in
+  `.inject_cfg` no longer aborts loading the rest, and spawn errors are printed instead of swallowed.
+- **Repo.** Committed `__pycache__` bytecode and `tankgame/game/app.py.bak` are gone, a `.gitignore`
+  covers bytecode and `.inject_cfg`, and `psutil`/`pywin32` are marked Windows-only in
+  `requirements.txt`.
+
 ## Collision, upgrades, hypnosis, homing/gravity, balance pass
 
 - **Rounds no longer vanish at the last moment.** `_cull_projectiles` ran *before* the collision
