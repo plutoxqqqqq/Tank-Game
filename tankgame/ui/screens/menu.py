@@ -1,210 +1,198 @@
-"""Menu screens: main menu, settings and controls."""
+"""Menu screens: main menu, settings and controls (liquid-glass style)."""
 from __future__ import annotations
 
 import math
-import random
-import sys
 import time
-import traceback
-from typing import Dict, List, Optional, Tuple
 
 import pygame
 from pygame.math import Vector2
 
 from tankgame.config import *
 from tankgame.util import *
-from tankgame.ui.text import *
-from tankgame.audio import *
+from tankgame.ui import glass
 from tankgame.data.weapons import WEAPONS
-from tankgame.data.traits import TRAITS, trait_of, TraitDef
-from tankgame.data.upgrades import UPGRADES, UPGRADES_BY_ID, UpgradeDef
-from tankgame.data.shop import (SHOP_ITEMS, SHOP_ITEMS_BY_ID, SHOP_ITEMS_BY_WEAPON,
-                                SHOP_ITEMS_BY_MAP, ShopItemDef, COSMETICS, COSMETICS_BY_ID,
-                                DEFAULT_COSMETICS, BUNDLES, CosmeticDef, BundleDef,
-                                BUNDLE_ONLY_COSMETIC_VALUE)
-from tankgame.data.maps import MAPS, MAPS_BY_ID, MapDef, map_of
-from tankgame.data.mutators import MUTATORS, MUTATORS_BY_ID, MutatorDef
-from tankgame.data.minigames import (MINIGAMES, MINIGAMES_BY_ID, MinigameDef,
-                                      METEOR_TELEGRAPH_START, METEOR_TELEGRAPH_END,
-                                      METEOR_RADIUS, METEOR_MAX_ACTIVE)
-from tankgame.data.mastery import MAX_MASTERY_LEVEL, mastery_requirements
-from tankgame.entities.player import Player
-from tankgame.entities.enemies import (EnemyBase, Chaser, Ranged, Tank, Sprinter, Dasher,
-                                        Pink, Boss)
-from tankgame.entities.projectile import Projectile
-from tankgame.entities.pickup import Pickup
-from tankgame.entities.fx import Particle, FloatingText
-from tankgame.entities.drone import Drone
-from tankgame.entities.meteor import Meteor
-from tankgame.art.tank_art import draw_tank
-from tankgame.ui.widgets import Button, TabButton
+from tankgame.ui.widgets import cached_button
 
+
+def _mouse_state(events):
+    return pygame.mouse.get_pos(), any(
+        e.type == pygame.MOUSEBUTTONDOWN and e.button == 1 for e in events)
 
 
 class MenuScreenMixin:
 
     def draw_menu(self, events):
-        self.screen.fill(C_BG)
+        glass.background(self.screen)
         cx = WIDTH // 2
         t = time.time()
         self.refresh_challenges()
 
-        draw_text(self.screen, self.font_big, "TANK GAME SURVIVAL", (cx, 80), C_TEXT, center=True)
-        draw_text(self.screen, self.font_ui, "survive • upgrade • progress • unlock tanks", (cx, 118), C_TEXT_DIM, center=True, shadow=False)
-        pygame.draw.line(self.screen, C_ACCENT, (cx - 360, 138), (cx + 360, 138), 2)
-        pygame.draw.line(self.screen, C_ACCENT_2, (cx - 300, 144), (cx + 300, 144), 2)
-        pygame.draw.circle(self.screen, C_ACCENT, (int(cx + math.sin(t * 1.3) * 340), 138), 4)
-        pygame.draw.circle(self.screen, C_ACCENT_2, (int(cx + math.cos(t * 1.1) * 320), 138), 4)
+        # Title with a soft animated glow and a gradient rule beneath it.
+        glass.text(self.screen, "TANK GAME", 78, (cx, 70), glass.GL_TEXT,
+                   align="center", bold=True, glow=True)
+        glass.text(self.screen, "S U R V I V A L", 26, (cx, 118),
+                   glass.lerp_color(glass.GL_ACCENT, glass.GL_ACCENT_2, glass.pulse(0.3)),
+                   align="center", bold=True)
+        glass.accent_rule(self.screen, cx, 140, 330)
 
-        panel = pygame.Rect(cx - 380, 158, 760, 84)
-        pygame.draw.rect(self.screen, (*C_PANEL, 235), panel, border_radius=12)
-        pygame.draw.rect(self.screen, (*C_WALL_EDGE, 220), panel, 1, border_radius=12)
-
+        # Status card: coins, selected tank, best score, challenge progress.
+        card_w = min(768, WIDTH - 60)
+        panel = pygame.Rect(cx - card_w // 2, 156, card_w, 70)
+        glass.panel(self.screen, panel, accent=glass.GL_ACCENT, glow=True)
         wdef = WEAPONS.get(self.save.selected_weapon, WEAPONS["pistol"])
-        draw_text(self.screen, self.font_ui, f"Coins: {self.save.coins}", (panel.x + 18, panel.y + 12), C_COIN, shadow=False)
-        draw_text(self.screen, self.font_ui, f"Selected: {wdef.name}", (panel.x + 18, panel.y + 44), C_ACCENT, shadow=False)
+        glass.text(self.screen, "COINS", 16, (panel.x + 22, panel.y + 12), glass.GL_TEXT_FAINT, bold=True)
+        glass.text(self.screen, f"{self.save.coins:,}", 30, (panel.x + 22, panel.y + 30), glass.GL_COIN, bold=True)
+        glass.text(self.screen, "SELECTED TANK", 16, (panel.x + int(card_w * 0.30), panel.y + 12), glass.GL_TEXT_FAINT, bold=True)
+        glass.text(self.screen, wdef.name, 30, (panel.x + int(card_w * 0.30), panel.y + 30), glass.GL_ACCENT, bold=True)
 
         daily = list(self.save.daily_challenges.get("items", []) or [])
         weekly = list(self.save.weekly_challenges.get("items", []) or [])
         daily_done = sum(1 for i in daily if i.get("claimed"))
         weekly_done = sum(1 for i in weekly if i.get("claimed"))
-        draw_text_right(self.screen, self.font_small, f"BEST SCORE   {self.save.best_score()}",
-                        (panel.right - 18, panel.y + 14), C_TEXT_DIM, shadow=False)
-        draw_text_right(self.screen, self.font_small, f"DAILY {daily_done}/{len(daily)}     WEEKLY {weekly_done}/{len(weekly)}",
-                        (panel.right - 18, panel.y + 46), C_TEXT_DIM, shadow=False)
+        glass.text(self.screen, f"BEST  {self.save.best_score():,}", 18,
+                   (panel.right - 22, panel.y + 14), glass.GL_TEXT, align="right", bold=True)
+        glass.text(self.screen, f"DAILY {daily_done}/{len(daily)}    WEEKLY {weekly_done}/{len(weekly)}",
+                   16, (panel.right - 22, panel.y + 42), glass.GL_TEXT_DIM, align="right")
 
-        mouse_pos = pygame.mouse.get_pos()
-        mouse_down = any(e.type == pygame.MOUSEBUTTONDOWN and e.button == 1 for e in events)
+        mouse_pos, mouse_down = _mouse_state(events)
         for b in self.menu_buttons:
             b.update(1 / 60, mouse_pos, mouse_down, events)
             b.draw(self.screen, self.font_small if b.small else self.font_med)
 
-        # Top-left X quit button
         self.menu_quit_btn.update(1 / 60, mouse_pos, mouse_down, events)
         self.menu_quit_btn.draw(self.screen, self.font_med)
 
-        pygame.draw.line(self.screen, C_WALL_EDGE, (cx - 300, 546), (cx + 300, 546), 1)
-        draw_text(self.screen, self.font_small, "WASD move  •  Mouse aim  •  Hold LMB shoot  •  Space dash",
-                  (cx, 566), C_TEXT_DIM, center=True, shadow=False)
-        draw_text(self.screen, self.font_small, "F auto-fire  •  ESC pause  •  ENTER start run",
-                  (cx, 590), C_TEXT_DIM, center=True, shadow=False)
+        # Footer controls hint on a glass strip.
+        strip_w = min(720, WIDTH - 60)
+        strip = pygame.Rect(cx - strip_w // 2, HEIGHT - 70, strip_w, 50)
+        glass.panel(self.screen, strip, radius=16, alpha=32, shadow=False)
+        glass.text(self.screen, "WASD move   ·   Mouse aim   ·   Hold LMB fire   ·   Space dash",
+                   17, (cx, strip.y + 14), glass.GL_TEXT_DIM, align="center")
+        glass.text(self.screen, "F auto-fire   ·   ESC pause   ·   Enter start run",
+                   17, (cx, strip.y + 31), glass.GL_TEXT_FAINT, align="center")
 
     def draw_settings(self, events):
-        self.screen.fill(C_BG)
+        glass.background(self.screen)
         cx = WIDTH // 2
+        glass.text(self.screen, "SETTINGS", 64, (cx, 70), glass.GL_TEXT, align="center", bold=True, glow=True)
+        glass.text(self.screen, "Tune how your runs feel", 22, (cx, 116), glass.GL_TEXT_DIM, align="center")
 
-        draw_text(self.screen, self.font_big, "SETTINGS", (cx, 92), C_TEXT, center=True)
-        draw_text(self.screen, self.font_ui, "Customize your run feel", (cx, 128), C_TEXT_DIM, center=True, shadow=False)
+        box_w = min(WIDTH - 120, 860)
+        box = pygame.Rect(WIDTH // 2 - box_w // 2, 156, box_w, 24 + 86 + 22 + 48 + 20 + 104 + 20)
+        glass.panel(self.screen, box, accent=glass.GL_ACCENT, glow=True)
 
-        box = pygame.Rect(140, 175, WIDTH - 280, HEIGHT - 275)
-        pygame.draw.rect(self.screen, (*C_PANEL, 235), box, border_radius=12)
-        pygame.draw.rect(self.screen, (*C_WALL_EDGE, 220), box, 1, border_radius=12)
-
-        opt_w = 248
-        opt_h = 52
-        opt_y = box.y + 34
-        opt_gap = 14
-
-        mouse_pos = pygame.mouse.get_pos()
-        mouse_down = any(e.type == pygame.MOUSEBUTTONDOWN and e.button == 1 for e in events)
-
+        mouse_pos, mouse_down = _mouse_state(events)
         options = [
             ("Fullscreen", "fullscreen"),
             ("Audio", "audio"),
-            ("Shake", "shake"),
-            ("Damage #s", "damage_numbers"),
+            ("Screen Shake", "shake"),
+            ("Damage Numbers", "damage_numbers"),
         ]
-        usable = box.w - 52
+        opt_gap = 14
+        usable = box.w - 48
         opt_w = (usable - (len(options) - 1) * opt_gap) // len(options)
-        total_w = len(options) * opt_w + (len(options) - 1) * opt_gap
-        opt_x = box.x + (box.w - total_w) // 2
+        opt_h = 86
+        opt_y = box.y + 24
+        opt_x = box.x + 24
 
-        def draw_option(label, key, x):
-            value_on = bool(self.save.settings.get(key, True))
-            rect = pygame.Rect(x, opt_y, opt_w, opt_h)
-            pygame.draw.rect(self.screen, (*C_PANEL_2, 245), rect, border_radius=12)
-            pygame.draw.rect(self.screen, (*C_WALL_EDGE, 200), rect, 2, border_radius=12)
-            draw_text(self.screen, self.font_shop_small, label, (rect.x + 14, rect.y + 15), C_TEXT, shadow=False)
-            badge = pygame.Rect(rect.right - 66, rect.y + 12, 52, 28)
-            pygame.draw.rect(self.screen, (*C_OK, 220) if value_on else (*C_TEXT_DIM, 160), badge, border_radius=8)
-            pygame.draw.rect(self.screen, C_WALL_EDGE, badge, 2, border_radius=8)
-            rect_centered_text(self.screen, self.font_tiny, "ON" if value_on else "OFF", badge,
-                               (10, 20, 20) if value_on else (25, 25, 32), shadow=False)
-            if rect.collidepoint(mouse_pos) and mouse_down:
+        for i, (label, key) in enumerate(options):
+            rect = pygame.Rect(opt_x + i * (opt_w + opt_gap), opt_y, opt_w, opt_h)
+            on = bool(self.save.settings.get(key, True))
+            hot = rect.collidepoint(mouse_pos)
+            glass.panel(self.screen, rect, radius=16, alpha=46 if hot else 32,
+                        accent=glass.GL_ACCENT if hot else None, shadow=False)
+            size = glass.fit_size(label, 20, rect.w - 16, 13, bold=True)
+            glass.text(self.screen, label, size, (rect.centerx, rect.y + 20),
+                       glass.GL_TEXT, align="center", bold=True)
+            sw = pygame.Rect(rect.centerx - 34, rect.y + 44, 68, 30)
+            self._glass_toggle(sw, on)
+            if hot and mouse_down:
                 if key == "fullscreen":
                     self.toggle_fullscreen()
                 else:
                     self.toggle_setting(key)
 
-        for i, (label, key) in enumerate(options):
-            draw_option(label, key, opt_x + i * (opt_w + opt_gap))
-
-        reset_y = opt_y + opt_h + 46
-        draw_text(self.screen, self.font_shop_item, "RESET", (box.x + 26, reset_y), C_TEXT, shadow=False)
-
-        reset_btn_y = reset_y + 32
-        reset_w = 240
-        reset_h = 46
-        reset_gap = 16
-        reset_w_total = reset_w * 2 + reset_gap
-        reset_x = box.x + (box.w - reset_w_total) // 2
-
-        reset_settings_btn = Button(pygame.Rect(reset_x, reset_btn_y, reset_w, reset_h), "Defaults", self.reset_settings)
-        reset_cosmetics_btn = Button(pygame.Rect(reset_x + reset_w + reset_gap, reset_btn_y, reset_w, reset_h), "Reset Cosmetics", self.reset_cosmetics)
-
+        rby = opt_y + opt_h + 22
+        glass.text(self.screen, "RESET", 20, (box.x + 26, rby + 25), glass.GL_TEXT_DIM, align="midleft", bold=True)
+        reset_gap = 14
+        reset_w = min(250, (box.w - 140 - reset_gap) // 2)
+        reset_h = 48
+        reset_x = box.right - 24 - (reset_w * 2 + reset_gap)
+        reset_settings_btn = cached_button("reset_settings", pygame.Rect(reset_x, rby, reset_w, reset_h),
+                                           "Restore Defaults", self.reset_settings)
+        reset_cosmetics_btn = cached_button("reset_cosmetics", pygame.Rect(reset_x + reset_w + reset_gap, rby, reset_w, reset_h),
+                                            "Reset Cosmetics", self.reset_cosmetics)
         for btn in (reset_settings_btn, reset_cosmetics_btn):
             btn.update(1 / 60, mouse_pos, mouse_down, events)
             btn.draw(self.screen, self.font_shop_small)
 
-        hint_y = reset_btn_y + reset_h + 34
-        hint_box = pygame.Rect(box.x + 26, hint_y, box.w - 52, 96)
-        pygame.draw.rect(self.screen, (*C_PANEL_2, 150), hint_box, border_radius=12)
-        pygame.draw.rect(self.screen, (*C_WALL_EDGE, 150), hint_box, 2, border_radius=12)
         tips = [
-            "Loaded saves are upgraded automatically - new weapons and cosmetics sync themselves in.",
-            "Damage numbers can be turned off for a cleaner screen on spammy tanks.",
-            "Screen shake off is recommended if the camera whipping makes you seasick.",
+            "Saves upgrade themselves — new tanks and cosmetics sync in automatically.",
+            "Turn damage numbers off for a cleaner screen on spray tanks.",
+            "Turn screen shake off if the camera motion bothers you.",
         ]
-        ty = hint_box.y + 12
+        hint_y = rby + reset_h + 20
+        hint_box = pygame.Rect(box.x + 24, hint_y, box.w - 48, box.bottom - 20 - hint_y)
+        glass.panel(self.screen, hint_box, radius=14, alpha=24, shadow=False)
+        line_h = max(20, min(28, (hint_box.h - 16) // len(tips)))
+        ty = hint_box.y + (hint_box.h - line_h * len(tips)) // 2
         for tip in tips:
-            draw_text(self.screen, self.font_shop_small, clamp_text(self.font_shop_small, tip, hint_box.w - 28),
-                      (hint_box.x + 14, ty), C_TEXT_DIM, shadow=False)
-            ty += 26
+            glass.text(self.screen, "•  " + glass.clip_text(tip, 19, hint_box.w - 44), 19,
+                       (hint_box.x + 18, ty + line_h // 2), glass.GL_TEXT_DIM, align="midleft")
+            ty += line_h
 
         if self.settings_back_btn:
             self.settings_back_btn.update(1 / 60, mouse_pos, mouse_down, events)
             self.settings_back_btn.draw(self.screen, self.font_med)
 
-    def draw_controls(self, events):
-        self.screen.fill(C_BG)
-        cx = WIDTH // 2
-        draw_text(self.screen, self.font_big, "CONTROLS", (cx, 92), C_TEXT, center=True)
-        draw_text(self.screen, self.font_ui, "Everything you need to survive", (cx, 128), C_TEXT_DIM, center=True, shadow=False)
+    def _glass_toggle(self, rect: pygame.Rect, on: bool):
+        rad = rect.height // 2
+        col = glass.GL_GOOD if on else (90, 98, 118)
+        track = pygame.Surface(rect.size, pygame.SRCALPHA)
+        if on:
+            grad = glass._vgrad(rect.size, (*glass.lerp_color(col, (255, 255, 255), 0.3), 235),
+                                (*col, 235))
+            m = glass._round_mask(rect.size, rad)
+            grad.blit(m, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+            track.blit(grad, (0, 0))
+        else:
+            pygame.draw.rect(track, (*col, 90), track.get_rect(), border_radius=rad)
+            pygame.draw.rect(track, (255, 255, 255, 30), track.get_rect(), 1, border_radius=rad)
+        self.screen.blit(track, rect.topleft)
+        knob_x = rect.right - rad if on else rect.x + rad
+        pygame.draw.circle(self.screen, (250, 253, 255), (knob_x, rect.centery), rad - 4)
+        pygame.draw.circle(self.screen, (0, 0, 0, 40), (knob_x, rect.centery), rad - 4, 1)
 
-        box = pygame.Rect(200, 170, WIDTH - 400, HEIGHT - 290)
-        pygame.draw.rect(self.screen, (*C_PANEL, 235), box, border_radius=12)
-        pygame.draw.rect(self.screen, (*C_WALL_EDGE, 220), box, 1, border_radius=12)
+    def draw_controls(self, events):
+        glass.background(self.screen)
+        cx = WIDTH // 2
+        glass.text(self.screen, "CONTROLS", 64, (cx, 70), glass.GL_TEXT, align="center", bold=True, glow=True)
+        glass.text(self.screen, "Everything you need to survive", 22, (cx, 116), glass.GL_TEXT_DIM, align="center")
+
+        box_w = min(WIDTH - 120, 640)
+        box = pygame.Rect(WIDTH // 2 - box_w // 2, 168, box_w, HEIGHT - 288)
+        glass.panel(self.screen, box, accent=glass.GL_ACCENT, glow=True)
 
         lines = [
-            ("WASD", " Drive your tank"),
-            ("Mouse", " Aim the turret"),
-            ("Left Mouse", " Fire (hold for full-auto)"),
-            ("F", " Toggle auto-fire"),
-            ("Space", " Dash - briefly invulnerable"),
-            ("ESC", " Pause / step back a screen"),
-            ("Enter", " Start a run from the menu"),
+            ("WASD", "Drive your tank"),
+            ("Mouse", "Aim the turret"),
+            ("Left Mouse", "Fire — hold for full-auto"),
+            ("F", "Toggle auto-fire"),
+            ("Space", "Dash — briefly invulnerable"),
+            ("ESC", "Pause / step back a screen"),
+            ("Enter", "Start a run from the menu"),
         ]
+        row_h = (box.h - 40) // len(lines)
         y = box.y + 20
         for key, desc in lines:
-            key_rect = pygame.Rect(box.x + 22, y, 148, 34)
-            pygame.draw.rect(self.screen, (*C_PANEL_2, 245), key_rect, border_radius=9)
-            pygame.draw.rect(self.screen, (*C_WALL_EDGE, 210), key_rect, 2, border_radius=9)
-            rect_centered_text(self.screen, self.font_small, key, key_rect, C_ACCENT, shadow=False)
-            draw_text(self.screen, self.font_shop_small, desc, (key_rect.right + 16, y + 7), C_TEXT_DIM, shadow=False)
-            y += 42
+            key_rect = pygame.Rect(box.x + 28, y + (row_h - 36) // 2, 160, 36)
+            glass.panel(self.screen, key_rect, radius=10, alpha=40, accent=glass.GL_ACCENT, shadow=False)
+            glass.text(self.screen, key, 20, key_rect.center, glass.GL_ACCENT, align="center", bold=True)
+            glass.text(self.screen, desc, 22, (key_rect.right + 22, key_rect.centery),
+                       glass.GL_TEXT_DIM, align="midleft")
+            y += row_h
 
-        mouse_pos = pygame.mouse.get_pos()
-        mouse_down = any(e.type == pygame.MOUSEBUTTONDOWN and e.button == 1 for e in events)
+        mouse_pos, mouse_down = _mouse_state(events)
         if self.controls_back_btn:
             self.controls_back_btn.update(1 / 60, mouse_pos, mouse_down, events)
             self.controls_back_btn.draw(self.screen, self.font_med)

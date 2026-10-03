@@ -229,7 +229,7 @@ class RunMixin:
                 self.level_choices[-1] = ultra
 
         cx = WIDTH // 2
-        bw, bh = 720, 90
+        bw, bh = min(720, WIDTH - 60), 90
         top = HEIGHT // 2 - 132
         self.level_cards = []
         for i, up in enumerate(self.level_choices):

@@ -448,11 +448,13 @@ class MetaMixin:
     def reset_settings(self):
         self.save.settings["audio"] = True
         self.save.settings["shake"] = True
+        self.save.settings["damage_numbers"] = True
         self.audio_enabled = AUDIO_ENABLED_DEFAULT and bool(self.save.settings.get("audio", True))
         self.save.save()
         self.audio_play("buy")
 
     def reset_cosmetics(self):
+        self.anticheat.note_save()
         self.save.cosmetics_equipped = dict(DEFAULT_COSMETICS)
         for cid in DEFAULT_COSMETICS.values():
             self.save.cosmetics_unlocked[cid] = True

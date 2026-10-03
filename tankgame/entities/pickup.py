@@ -32,12 +32,15 @@ class Pickup:
 
         if self.kind == "xp":
             r = int(XP_ORB_RADIUS * pulse)
-            pygame.draw.circle(surf, C_XP, p, r)
-            circle_outline(surf, (60, 220, 140), p, r + 3, 2)
+            circle_outline(surf, (34, 92, 64), p, r + 4, 2)
+            pygame.draw.circle(surf, (60, 200, 130), p, r)
+            pygame.draw.circle(surf, C_XP, p, max(1, r - 2))
+            pygame.draw.circle(surf, (220, 255, 232), (p[0] - r // 3, p[1] - r // 3), max(1, r // 3))
         elif self.kind == "health":
             r = int(HEALTH_PACK_RADIUS * pulse)
-            pygame.draw.circle(surf, C_HEALTH, p, r)
-            circle_outline(surf, (255, 160, 190), p, r + 3, 2)
+            circle_outline(surf, (110, 40, 56), p, r + 4, 2)
+            pygame.draw.circle(surf, (200, 60, 84), p, r)
+            pygame.draw.circle(surf, C_HEALTH, p, max(1, r - 2))
             pygame.draw.rect(surf, (255, 240, 245), pygame.Rect(p[0] - 2, p[1] - 7, 4, 14))
             pygame.draw.rect(surf, (255, 240, 245), pygame.Rect(p[0] - 7, p[1] - 2, 14, 4))
         else:

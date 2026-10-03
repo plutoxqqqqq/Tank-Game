@@ -83,7 +83,7 @@ class MinigameMixin:
         self.wave_mutator = None
 
         if mg.id == "blitz":
-            self.spawn_interval = 0.34
+            self.spawn_interval = BLITZ_SPAWN_INTERVAL
         elif mg.id == "rapid":
             # Every wave lasts three seconds, so the whole run is a blur of new waves.
             self.wave_time = RAPID_WAVE_TIME

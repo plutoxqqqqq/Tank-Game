@@ -443,6 +443,8 @@ class CombatMixin:
                 if (e.pos - h["pos"]).length_squared() <= r2:
                     tick = h["dps"] * dt
                     e.hp -= tick
+                    e.last_hit_by_player = True
+                    e.last_hit_weapon_id = self.player.weapon_id
                     self.credit_burn_damage(tick)
                     e.apply_burn(h["dps"] * 0.5, 0.6)
         self.hazards = [h for h in self.hazards if h["life"] > 0.0]
@@ -593,7 +595,8 @@ class CombatMixin:
                     hit_dmg *= (1.0 + b.overpen_frac * b.hit_count)
                 b.hit_count += 1
                 # Tank "Executioner" ultra: anything that is not a boss dies on contact.
-                if self.player.instant_kill and not isinstance(e, Boss):
+                own_round = b.owner == "player"
+                if own_round and self.player.instant_kill and not isinstance(e, Boss):
                     hit_dmg = max(hit_dmg, e.hp)
                 knockback = (base_knock * weapon_knock * self.player.knockback_mult
                              * self.player.trait_data().get("knockback_mul", 1.0))
@@ -625,7 +628,7 @@ class CombatMixin:
                 if self.player.chain_double and chains <= 0:
                     # Electricity "Overload" borrowed by a chain-less tank still arcs.
                     chains, chain_range = 3, max(chain_range, 220.0)
-                if chains > 0 and chain_range > 0.0:
+                if own_round and chains > 0 and chain_range > 0.0:
                     self.tesla_chain(e, base_damage=hit_dmg, chains=chains, chain_range=chain_range)
                     # Electricity "Overload" ultra: every chain strikes the arc a second time.
                     if self.player.chain_double:

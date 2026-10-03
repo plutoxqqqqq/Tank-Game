@@ -1,285 +1,187 @@
-"""The shop screen."""
+"""Shop screen (liquid-glass style): meta, weapons, maps, cosmetics and bundles."""
 from __future__ import annotations
 
 import math
-import random
-import sys
-import time
-import traceback
-from typing import Dict, List, Optional, Tuple
 
 import pygame
-from pygame.math import Vector2
 
 from tankgame.config import *
 from tankgame.util import *
-from tankgame.ui.text import *
-from tankgame.audio import *
+from tankgame.ui import glass
 from tankgame.data.weapons import WEAPONS
-from tankgame.data.traits import TRAITS, trait_of, TraitDef
-from tankgame.data.upgrades import UPGRADES, UPGRADES_BY_ID, UpgradeDef
-from tankgame.data.shop import (SHOP_ITEMS, SHOP_ITEMS_BY_ID, SHOP_ITEMS_BY_WEAPON,
-                                SHOP_ITEMS_BY_MAP, ShopItemDef, COSMETICS, COSMETICS_BY_ID,
-                                DEFAULT_COSMETICS, BUNDLES, CosmeticDef, BundleDef,
-                                BUNDLE_ONLY_COSMETIC_VALUE)
-from tankgame.data.maps import MAPS, MAPS_BY_ID, MapDef, map_of
-from tankgame.data.mutators import MUTATORS, MUTATORS_BY_ID, MutatorDef
-from tankgame.data.minigames import (MINIGAMES, MINIGAMES_BY_ID, MinigameDef,
-                                      METEOR_TELEGRAPH_START, METEOR_TELEGRAPH_END,
-                                      METEOR_RADIUS, METEOR_MAX_ACTIVE)
-from tankgame.data.mastery import MAX_MASTERY_LEVEL, mastery_requirements
-from tankgame.entities.player import Player
-from tankgame.entities.enemies import (EnemyBase, Chaser, Ranged, Tank, Sprinter, Dasher,
-                                        Pink, Boss)
-from tankgame.entities.projectile import Projectile
-from tankgame.entities.pickup import Pickup
-from tankgame.entities.fx import Particle, FloatingText
-from tankgame.entities.drone import Drone
-from tankgame.entities.meteor import Meteor
-from tankgame.art.tank_art import draw_tank
-from tankgame.ui.widgets import Button, TabButton
+from tankgame.data.shop import (SHOP_ITEMS_BY_ID, SHOP_ITEMS_BY_WEAPON, COSMETICS,
+                                COSMETICS_BY_ID, BUNDLES)
+from tankgame.ui.widgets import Button, cached_button
 
+
+def _mouse_state(events):
+    return pygame.mouse.get_pos(), any(
+        e.type == pygame.MOUSEBUTTONDOWN and e.button == 1 for e in events)
 
 
 class ShopScreenMixin:
 
     def draw_shop(self, events):
-        self.screen.fill(C_BG)
+        glass.background(self.screen)
         cx = WIDTH // 2
-        draw_text(self.screen, self.font_shop_title, "SHOP", (cx, 62), C_TEXT, center=True)
-        draw_text(self.screen, self.font_ui, f"Coins: {self.save.coins}", (cx, 92), C_COIN, center=True)
+        glass.text(self.screen, "SHOP", 60, (cx, 44), glass.GL_TEXT, align="center", bold=True, glow=True)
+        glass.text(self.screen, f"{self.save.coins:,} coins", 24, (cx, 88), glass.GL_COIN, align="center", bold=True)
 
-        mouse_pos = pygame.mouse.get_pos()
-        mouse_down = any(e.type == pygame.MOUSEBUTTONDOWN and e.button == 1 for e in events)
-
+        mouse_pos, mouse_down = _mouse_state(events)
         for tab in self.shop_tabs:
             tab.update(mouse_pos, mouse_down)
             tab.draw(self.screen, self.font_shop_item, active=(tab.tab_id == self.shop_tab))
 
-        box = pygame.Rect(70, 175, WIDTH - 140, HEIGHT - 270)
-        if self.shop_tab != "cosmetics":
-            pygame.draw.rect(self.screen, (*C_PANEL, 235), box, border_radius=12)
-            pygame.draw.rect(self.screen, (*C_WALL_EDGE, 220), box, 1, border_radius=12)
-
+        controls_top = self.shop_prev_btn.rect.top
         if self.shop_tab == "cosmetics":
             for tab in self.cosmetic_tabs:
                 tab.update(mouse_pos, mouse_down)
                 tab.draw(self.screen, self.font_shop_desc, active=(tab.tab_id == self.cosmetics_category))
+            list_top = 222
+        else:
+            list_top = 176
+        box = pygame.Rect(70, list_top, WIDTH - 140, controls_top - 14 - list_top)
+        glass.panel(self.screen, box, accent=glass.GL_ACCENT, glow=True)
 
-            controls_top = min(self.shop_prev_btn.rect.top, self.shop_back_btn.rect.top)
-            list_top = 220
-            list_bottom = controls_top - 12
-            cosmetic_box = pygame.Rect(70, list_top, WIDTH - 140, list_bottom - list_top)
-            pygame.draw.rect(self.screen, (*C_PANEL, 235), cosmetic_box, border_radius=12)
-            pygame.draw.rect(self.screen, (*C_WALL_EDGE, 220), cosmetic_box, 1, border_radius=12)
-
-            cosmetics = [c for c in COSMETICS if c.category == self.cosmetics_category]
-            row_h = 64
-            gap = 8
-            rows_per_page = max(1, (cosmetic_box.h - 24) // (row_h + gap))
-            total_pages = max(1, math.ceil(len(cosmetics) / rows_per_page))
-            self.shop_page = clamp(self.shop_page, 0, total_pages - 1)
-
-            start = self.shop_page * rows_per_page
-            end = start + rows_per_page
-            page_items = cosmetics[start:end]
-
-            has_prev = self.shop_page > 0
-            has_next = (self.shop_page + 1) < total_pages
-            self.shop_prev_btn.enabled = has_prev
-            self.shop_next_btn.enabled = has_next
-
-            x0 = cosmetic_box.x + 18
-            y = cosmetic_box.y + 14
-            row_w = cosmetic_box.w - 36
-
-            for cosmetic in page_items:
-                row = pygame.Rect(x0, y, row_w, row_h)
-                y += (row_h + gap)
-
-                pygame.draw.rect(self.screen, (*C_PANEL_2, 245), row, border_radius=12)
-                pygame.draw.rect(self.screen, (*C_WALL_EDGE, 200), row, 2, border_radius=12)
-
-                unlocked = bool(self.save.cosmetics_unlocked.get(cosmetic.id, False))
-                equipped = self.save.cosmetics_equipped.get(cosmetic.category) == cosmetic.id
-                status = "Owned" if unlocked else ("Bundle Exclusive" if cosmetic.bundle_only else "Locked")
-                cost_txt = "--" if unlocked or cosmetic.bundle_only else f"{cosmetic.cost} coins"
-                cat_txt = cosmetic.category.upper()
-
-                swatch = pygame.Rect(row.x + 12, row.y + 16, 32, 32)
-                pygame.draw.rect(self.screen, (*cosmetic.color, 255), swatch, border_radius=8)
-                pygame.draw.rect(self.screen, C_WALL_EDGE, swatch, 2, border_radius=8)
-
-                draw_text(self.screen, self.font_shop_item, f"{cosmetic.name}  •  {cat_txt}", (row.x + 56, row.y + 8), C_TEXT, shadow=False)
-                draw_text(self.screen, self.font_shop_desc, cosmetic.desc, (row.x + 56, row.y + 34), C_TEXT_DIM, shadow=False)
-                draw_text(self.screen, self.font_shop_small, status, (row.right - 300, row.y + 10),
-                          C_OK if unlocked else C_TEXT_DIM, shadow=False)
-                draw_text(self.screen, self.font_shop_small, cost_txt, (row.right - 300, row.y + 34), C_COIN, shadow=False)
-
-                action_rect = pygame.Rect(row.right - 120, row.y + 13, 100, 38)
-                if equipped:
-                    pygame.draw.rect(self.screen, (*C_OK, 220), action_rect, border_radius=10)
-                    pygame.draw.rect(self.screen, C_WALL_EDGE, action_rect, 2, border_radius=10)
-                    rect_centered_text(self.screen, self.font_shop_small, "EQUIPPED", action_rect, (10, 20, 20), shadow=False)
-                else:
-                    label = "Equip" if unlocked else ("Bundle" if cosmetic.bundle_only else "Buy")
-                    btn = Button(action_rect, label, callback=lambda c=cosmetic: self.equip_cosmetic(c) if self.save.cosmetics_unlocked.get(c.id, False) else self.buy_cosmetic(c))
-                    btn.enabled = unlocked or (not cosmetic.bundle_only and self.save.coins >= cosmetic.cost)
-                    btn.update(1 / 60, mouse_pos, mouse_down, events)
-                    btn.draw(self.screen, self.font_shop_small)
-
-            self.shop_back_btn.update(1 / 60, mouse_pos, mouse_down, events)
-            self.shop_back_btn.draw(self.screen, self.font_med)
-
-            self.shop_prev_btn.update(1 / 60, mouse_pos, mouse_down, events)
-            self.shop_next_btn.update(1 / 60, mouse_pos, mouse_down, events)
-            self.shop_prev_btn.draw(self.screen, self.font_med)
-            self.shop_next_btn.draw(self.screen, self.font_med)
-
-            page_txt = f"Page {self.shop_page + 1}/{total_pages}"
-            mid_x = (self.shop_prev_btn.rect.centerx + self.shop_next_btn.rect.centerx) // 2
-            below_y = self.shop_prev_btn.rect.bottom + 10
-            draw_text(self.screen, self.font_tiny, page_txt, (mid_x, below_y), C_TEXT_DIM, center=True, shadow=False)
-            return
-
-        if self.shop_tab == "bundles":
-            items = BUNDLES
-            # Bundle rows are 86 tall + 12 gap - using the generic 72+12 step overflowed the panel.
-            rows_per_page = self._shop_rows_per_page(box, row_h=86)
-            total_pages = max(1, math.ceil(len(items) / max(1, rows_per_page)))
-            self.shop_page = clamp(self.shop_page, 0, total_pages - 1)
-
-            start = self.shop_page * rows_per_page
-            end = start + rows_per_page
-            page_items = items[start:end]
-
-            has_prev = self.shop_page > 0
-            has_next = (self.shop_page + 1) < total_pages
-            self.shop_prev_btn.enabled = has_prev
-            self.shop_next_btn.enabled = has_next
-
-            x0 = box.x + 18
-            y = box.y + 14
-
-            row_h = 86
-            gap = 12
-            row_w = box.w - 36
-
-            for bundle in page_items:
-                row = pygame.Rect(x0, y, row_w, row_h)
-                y += (row_h + gap)
-
-                pygame.draw.rect(self.screen, (*C_PANEL_2, 245), row, border_radius=12)
-                pygame.draw.rect(self.screen, (*C_WALL_EDGE, 200), row, 2, border_radius=12)
-
-                weapons, meta, cosmetics = self.resolve_bundle_items(bundle)
-                owned = self.bundle_is_owned(bundle)
-                cost = self.bundle_price(bundle)
-                includes = []
-                includes += [WEAPONS[w].name for w in weapons if w in WEAPONS]
-                includes += [SHOP_ITEMS_BY_ID[m].name for m in meta if m in SHOP_ITEMS_BY_ID]
-                includes += [COSMETICS_BY_ID[c].name for c in cosmetics if c in COSMETICS_BY_ID]
-                includes_txt = ", ".join(includes) if includes else "No bundle items available"
-
-                draw_text(self.screen, self.font_shop_item, bundle.name, (row.x + 14, row.y + 10), C_TEXT, shadow=False)
-                draw_text(self.screen, self.font_shop_desc, bundle.desc, (row.x + 14, row.y + 38), C_TEXT_DIM, shadow=False)
-                draw_text(self.screen, self.font_shop_small, includes_txt, (row.x + 14, row.y + 62), C_TEXT_DIM, shadow=False)
-
-                status_txt = "OWNED" if owned else f"{int(bundle.discount * 100)}% off"
-                draw_text(self.screen, self.font_shop_small, status_txt, (row.right - 310, row.y + 16),
-                          C_OK if owned else C_TEXT_DIM, shadow=False)
-                cost_txt = "OWNED" if owned else f"{cost} coins"
-                draw_text(self.screen, self.font_shop_small, cost_txt, (row.right - 310, row.y + 44), C_COIN, shadow=False)
-
-                buy_rect = pygame.Rect(row.right - 110, row.y + 22, 92, 40)
-                btn = Button(buy_rect, "Buy", callback=lambda b=bundle: self.buy_bundle(b))
-                btn.enabled = (not owned) and (self.save.coins >= cost) and cost > 0
-                btn.update(1 / 60, mouse_pos, mouse_down, events)
-                btn.draw(self.screen, self.font_shop_small)
-
-            self.shop_back_btn.update(1 / 60, mouse_pos, mouse_down, events)
-            self.shop_back_btn.draw(self.screen, self.font_med)
-
-            self.shop_prev_btn.update(1 / 60, mouse_pos, mouse_down, events)
-            self.shop_next_btn.update(1 / 60, mouse_pos, mouse_down, events)
-            self.shop_prev_btn.draw(self.screen, self.font_med)
-            self.shop_next_btn.draw(self.screen, self.font_med)
-
-            page_txt = f"Page {self.shop_page + 1}/{total_pages}"
-            mid_x = (self.shop_prev_btn.rect.centerx + self.shop_next_btn.rect.centerx) // 2
-            below_y = self.shop_prev_btn.rect.bottom + 10
-            draw_text(self.screen, self.font_tiny, page_txt, (mid_x, below_y), C_TEXT_DIM, center=True, shadow=False)
-            return
-
-        items = self._shop_items_for_tab()
-
-        rows_per_page = self._shop_rows_per_page(box)
-        total_pages = max(1, math.ceil(len(items) / max(1, rows_per_page)))
-        self.shop_page = clamp(self.shop_page, 0, total_pages - 1)
-
-        start = self.shop_page * rows_per_page
-        end = start + rows_per_page
-        page_items = items[start:end]
-
-        has_prev = self.shop_page > 0
-        has_next = (self.shop_page + 1) < total_pages
-        self.shop_prev_btn.enabled = has_prev
-        self.shop_next_btn.enabled = has_next
-
-        x0 = box.x + 18
-        y = box.y + 14
-
-        row_h = 72
-        gap = 12
-        row_w = box.w - 36
-
-        for item in page_items:
-            row = pygame.Rect(x0, y, row_w, row_h)
-            y += (row_h + gap)
-
-            pygame.draw.rect(self.screen, (*C_PANEL_2, 245), row, border_radius=12)
-            pygame.draw.rect(self.screen, (*C_WALL_EDGE, 200), row, 2, border_radius=12)
-
-            maxed = self.is_maxed(item)
-            cost = self.shop_cost(item)
-
-            if item.kind == "weapon":
-                unlocked = bool(self.save.weapon_unlocks.get(item.weapon_id, False))
-                lvl_txt = "Unlocked" if unlocked else "Locked"
-                lvl_col = C_OK if unlocked else C_TEXT_DIM
-                cost_txt = "MAX" if maxed else f"{cost} coins"
-            elif item.kind == "map":
-                owned = bool(self.save.map_unlocks.get(item.weapon_id, False))
-                lvl_txt = "Owned" if owned else "Locked"
-                lvl_col = C_OK if owned else C_TEXT_DIM
-                cost_txt = "MAX" if maxed else f"{cost} coins"
-            else:
-                lvl = int(self.save.shop_levels.get(item.id, 0))
-                lvl_txt = f"Level {lvl}/{item.max_level}"
-                lvl_col = C_TEXT_DIM
-                cost_txt = "MAX" if maxed else f"{cost} coins"
-
-            draw_text(self.screen, self.font_shop_item, item.name, (row.x + 14, row.y + 10), C_TEXT, shadow=False)
-            draw_text(self.screen, self.font_shop_desc, item.desc, (row.x + 14, row.y + 38), C_TEXT_DIM, shadow=False)
-            draw_text(self.screen, self.font_shop_small, lvl_txt, (row.right - 310, row.y + 14), lvl_col, shadow=False)
-            draw_text(self.screen, self.font_shop_small, cost_txt, (row.right - 310, row.y + 38), C_COIN, shadow=False)
-
-            buy_rect = pygame.Rect(row.right - 110, row.y + 16, 92, 40)
-            label = "Buy" if not maxed else ("Owned" if item.kind in ("weapon", "map") else "Max")
-            btn = Button(buy_rect, label, callback=lambda it=item: self.buy_item(it))
-            btn.enabled = self.can_buy(item)
-            btn.update(1 / 60, mouse_pos, mouse_down, events)
-            btn.draw(self.screen, self.font_shop_small)
+        if self.shop_tab == "cosmetics":
+            self._draw_shop_cosmetics(box, mouse_pos, mouse_down, events)
+        elif self.shop_tab == "bundles":
+            self._draw_shop_bundles(box, mouse_pos, mouse_down, events)
+        else:
+            self._draw_shop_items(box, mouse_pos, mouse_down, events)
 
         self.shop_back_btn.update(1 / 60, mouse_pos, mouse_down, events)
         self.shop_back_btn.draw(self.screen, self.font_med)
-
         self.shop_prev_btn.update(1 / 60, mouse_pos, mouse_down, events)
         self.shop_next_btn.update(1 / 60, mouse_pos, mouse_down, events)
         self.shop_prev_btn.draw(self.screen, self.font_med)
         self.shop_next_btn.draw(self.screen, self.font_med)
 
-        page_txt = f"Page {self.shop_page + 1}/{total_pages}"
+    def _page(self, items, box, row_h, gap=12):
+        rows_per_page = max(1, (box.h - 28) // (row_h + gap))
+        total_pages = max(1, math.ceil(len(items) / rows_per_page))
+        self.shop_page = int(clamp(self.shop_page, 0, total_pages - 1))
+        start = self.shop_page * rows_per_page
+        page = items[start:start + rows_per_page]
+        self.shop_prev_btn.enabled = self.shop_page > 0
+        self.shop_next_btn.enabled = (self.shop_page + 1) < total_pages
         mid_x = (self.shop_prev_btn.rect.centerx + self.shop_next_btn.rect.centerx) // 2
-        below_y = self.shop_prev_btn.rect.bottom + 10
-        draw_text(self.screen, self.font_tiny, page_txt, (mid_x, below_y), C_TEXT_DIM, center=True, shadow=False)
+        glass.text(self.screen, f"Page {self.shop_page + 1}/{total_pages}", 18,
+                   (mid_x, self.shop_prev_btn.rect.bottom + 8), glass.GL_TEXT_DIM, align="center")
+        return page
+
+    def _draw_shop_items(self, box, mouse_pos, mouse_down, events):
+        items = self._shop_items_for_tab()
+        row_h = 74
+        page = self._page(items, box, row_h)
+        x0, y = box.x + 18, box.y + 16
+        for item in page:
+            row = pygame.Rect(x0, y, box.w - 36, row_h)
+            y += row_h + 12
+            maxed = self.is_maxed(item)
+            cost = self.shop_cost(item)
+            glass.panel(self.screen, row, radius=14, alpha=30, shadow=False)
+
+            if item.kind == "weapon":
+                owned = bool(self.save.weapon_unlocks.get(item.weapon_id, False))
+                status = "UNLOCKED" if owned else "LOCKED"
+                status_col = glass.GL_GOOD if owned else glass.GL_TEXT_DIM
+            elif item.kind == "map":
+                owned = bool(self.save.map_unlocks.get(item.weapon_id, False))
+                status = "OWNED" if owned else "LOCKED"
+                status_col = glass.GL_GOOD if owned else glass.GL_TEXT_DIM
+            else:
+                lvl = int(self.save.shop_levels.get(item.id, 0))
+                status = f"LEVEL {lvl}/{item.max_level}"
+                status_col = glass.GL_ACCENT
+
+            glass.text(self.screen, item.name, 26, (row.x + 16, row.y + 10), glass.GL_TEXT, bold=True)
+            glass.text(self.screen, glass.clip_text(item.desc, 20, row.w - 320), 20,
+                       (row.x + 16, row.y + 40), glass.GL_TEXT_DIM)
+            glass.text(self.screen, status, 18, (row.right - 150, row.y + 14), status_col, align="right", bold=True)
+            cost_txt = "MAX" if maxed else f"{cost:,} coins"
+            glass.text(self.screen, cost_txt, 18, (row.right - 150, row.y + 40),
+                       glass.GL_COIN if not maxed else glass.GL_TEXT_FAINT, align="right", bold=True)
+
+            buy = pygame.Rect(row.right - 126, row.centery - 22, 108, 44)
+            label = "Buy" if not maxed else ("Owned" if item.kind in ("weapon", "map") else "Max")
+            btn = cached_button(("shop", item.id), buy, label, lambda it=item: self.buy_item(it),
+                                kind="primary" if self.can_buy(item) else "normal",
+                                enabled=self.can_buy(item))
+            btn.update(1 / 60, mouse_pos, mouse_down, events)
+            btn.draw(self.screen, self.font_shop_small)
+
+    def _draw_shop_cosmetics(self, box, mouse_pos, mouse_down, events):
+        items = [c for c in COSMETICS if c.category == self.cosmetics_category]
+        row_h = 68
+        page = self._page(items, box, row_h, gap=10)
+        x0, y = box.x + 18, box.y + 14
+        for c in page:
+            row = pygame.Rect(x0, y, box.w - 36, row_h)
+            y += row_h + 10
+            unlocked = bool(self.save.cosmetics_unlocked.get(c.id, False))
+            equipped = self.save.cosmetics_equipped.get(c.category) == c.id
+            glass.panel(self.screen, row, radius=14, alpha=34,
+                        accent=glass.GL_GOOD if equipped else None, shadow=False)
+
+            swatch = pygame.Rect(row.x + 14, row.centery - 17, 34, 34)
+            sw = pygame.Surface(swatch.size, pygame.SRCALPHA)
+            pygame.draw.rect(sw, (*c.color, 255), sw.get_rect(), border_radius=10)
+            pygame.draw.rect(sw, (255, 255, 255, 60), sw.get_rect(), 1, border_radius=10)
+            self.screen.blit(sw, swatch.topleft)
+
+            glass.text(self.screen, c.name, 24, (row.x + 60, row.y + 10), glass.GL_TEXT, bold=True)
+            glass.text(self.screen, glass.clip_text(c.desc, 20, row.w - 360), 20,
+                       (row.x + 60, row.y + 38), glass.GL_TEXT_DIM)
+            status = "Owned" if unlocked else ("Bundle Exclusive" if c.bundle_only else f"{c.cost} coins")
+            glass.text(self.screen, status, 18, (row.right - 150, row.centery),
+                       glass.GL_GOOD if unlocked else glass.GL_COIN, align="midright")
+
+            action = pygame.Rect(row.right - 126, row.centery - 20, 108, 40)
+            if equipped:
+                glass.badge(self.screen, action, "EQUIPPED", color=glass.GL_GOOD, size=16)
+            else:
+                label = "Equip" if unlocked else ("Bundle" if c.bundle_only else "Buy")
+                can = unlocked or (not c.bundle_only and self.save.coins >= c.cost)
+                btn = cached_button(("cosmetic", c.id), action, label,
+                                    lambda cc=c: self.equip_cosmetic(cc) if self.save.cosmetics_unlocked.get(cc.id, False) else self.buy_cosmetic(cc),
+                                    kind="primary" if can else "normal", enabled=can)
+                btn.update(1 / 60, mouse_pos, mouse_down, events)
+                btn.draw(self.screen, self.font_shop_small)
+
+    def _draw_shop_bundles(self, box, mouse_pos, mouse_down, events):
+        row_h = 92
+        page = self._page(BUNDLES, box, row_h)
+        x0, y = box.x + 18, box.y + 16
+        for bundle in page:
+            row = pygame.Rect(x0, y, box.w - 36, row_h)
+            y += row_h + 12
+            weapons, meta, cosmetics = self.resolve_bundle_items(bundle)
+            owned = self.bundle_is_owned(bundle)
+            cost = self.bundle_price(bundle)
+            glass.panel(self.screen, row, radius=14, alpha=32,
+                        accent=glass.GL_ACCENT_2 if not owned else glass.GL_GOOD, shadow=False)
+            includes = []
+            includes += [WEAPONS[w].name for w in weapons if w in WEAPONS]
+            includes += [SHOP_ITEMS_BY_ID[m].name for m in meta if m in SHOP_ITEMS_BY_ID]
+            includes += [COSMETICS_BY_ID[c].name for c in cosmetics if c in COSMETICS_BY_ID]
+            includes_txt = ", ".join(includes) if includes else "No bundle items available"
+
+            glass.text(self.screen, bundle.name, 26, (row.x + 16, row.y + 10), glass.GL_TEXT, bold=True)
+            glass.text(self.screen, glass.clip_text(bundle.desc, 20, row.w - 320), 20,
+                       (row.x + 16, row.y + 38), glass.GL_TEXT_DIM)
+            glass.text(self.screen, glass.clip_text("Includes: " + includes_txt, 18, row.w - 320),
+                       18, (row.x + 16, row.y + 62), glass.GL_TEXT_FAINT)
+            status = "OWNED" if owned else f"{int(bundle.discount * 100)}% off"
+            glass.text(self.screen, status, 18, (row.right - 150, row.y + 20),
+                       glass.GL_GOOD if owned else glass.GL_ACCENT_2, align="right", bold=True)
+            glass.text(self.screen, "OWNED" if owned else f"{cost:,} coins", 18,
+                       (row.right - 150, row.y + 48), glass.GL_COIN, align="right", bold=True)
+
+            buy = pygame.Rect(row.right - 126, row.centery - 22, 108, 44)
+            can = (not owned) and (self.save.coins >= cost) and cost > 0
+            btn = cached_button(("bundle", bundle.id), buy, "Owned" if owned else "Buy",
+                                lambda b=bundle: self.buy_bundle(b),
+                                kind="primary" if can else "normal", enabled=can)
+            btn.update(1 / 60, mouse_pos, mouse_down, events)
+            btn.draw(self.screen, self.font_shop_small)

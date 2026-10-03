@@ -14,6 +14,17 @@ from tankgame.entities.projectile import Projectile
 from tankgame.ui.text import circle_outline
 
 
+def shade_body(surf, p, radius: int, col):
+    """A solid unit with a ground shadow, a darker rim and a soft specular highlight."""
+    pygame.draw.circle(surf, (6, 8, 12), (p[0] + 3, p[1] + 4), radius)
+    rim = (max(0, col[0] - 70), max(0, col[1] - 70), max(0, col[2] - 70))
+    pygame.draw.circle(surf, rim, p, radius)
+    pygame.draw.circle(surf, col, p, max(1, radius - 2))
+    hl = (min(255, col[0] + 70), min(255, col[1] + 70), min(255, col[2] + 70))
+    pygame.draw.circle(surf, hl, (p[0] - radius // 3, p[1] - radius // 3), max(2, radius // 3))
+    pygame.draw.circle(surf, (12, 14, 20), p, radius + 1, 1)
+
+
 class EnemyBase:
     def __init__(self, pos: Vector2, hp: float, speed: float, radius: int, color):
         self.pos = Vector2(pos)
@@ -104,8 +115,7 @@ class EnemyBase:
     def draw(self, surf, cam):
         p = (int(self.pos.x - cam.x), int(self.pos.y - cam.y))
         col = (255, 255, 255) if self.hit_flash > 0 else self.color
-        pygame.draw.circle(surf, col, p, self.radius)
-        circle_outline(surf, (14, 16, 22), p, self.radius + 2, 1)
+        shade_body(surf, p, self.radius, col)
 
         if self.elite:
             circle_outline(surf, (255, 215, 120), p, self.radius + 6, 2)
@@ -126,8 +136,9 @@ class EnemyBase:
             x = p[0] - w // 2
             y = p[1] - self.radius - 12
             frac = clamp(self.hp / max(1.0, self.hp_max), 0, 1)
-            pygame.draw.rect(surf, (10, 10, 12), pygame.Rect(x, y, w, h))
-            pygame.draw.rect(surf, (90, 255, 210), pygame.Rect(x, y, int(w * frac), h))
+            pygame.draw.rect(surf, (10, 12, 16), pygame.Rect(x - 1, y - 1, w + 2, h + 2), border_radius=3)
+            if frac > 0:
+                pygame.draw.rect(surf, (90, 255, 210), pygame.Rect(x, y, max(2, int(w * frac)), h), border_radius=2)
 
 
 class Chaser(EnemyBase):
@@ -351,6 +362,11 @@ class Boss(EnemyBase):
         self.bullet_life = 1.5
         self.enraged = False
 
+    def apply_charm(self, duration: float):
+        # Immune: a brainwashed boss can never be killed, so the boss fight (and the run) would
+        # never end - wave progression and normal spawns both wait on it.
+        return
+
     def take_damage(self, dmg: int, knock_dir: Vector2, knockback: float, weapon_id: Optional[str] = None, from_player: bool = False):
         # Boss has knockback resistance
         super().take_damage(dmg, knock_dir, knockback * 0.35, weapon_id=weapon_id, from_player=from_player)
@@ -424,7 +440,7 @@ class Boss(EnemyBase):
     def draw(self, surf, cam):
         p = (int(self.pos.x - cam.x), int(self.pos.y - cam.y))
         col = (255, 255, 255) if self.hit_flash > 0 else self.color
-        pygame.draw.circle(surf, col, p, self.radius)
+        shade_body(surf, p, self.radius, col)
         edge = C_BOSS_EDGE if not self.enraged else (255, 235, 150)
         circle_outline(surf, edge, p, self.radius + 5, 3)
         circle_outline(surf, (25, 25, 35), p, self.radius + 10, 2)
@@ -437,5 +453,6 @@ class Boss(EnemyBase):
         x = p[0] - w // 2
         y = p[1] - self.radius - 16
         frac = clamp(self.hp / max(1.0, self.hp_max), 0, 1)
-        pygame.draw.rect(surf, (10, 10, 12), pygame.Rect(x, y, w, h))
-        pygame.draw.rect(surf, (255, 120, 140), pygame.Rect(x, y, int(w * frac), h))
+        pygame.draw.rect(surf, (10, 12, 16), pygame.Rect(x - 1, y - 1, w + 2, h + 2), border_radius=4)
+        if frac > 0:
+            pygame.draw.rect(surf, (255, 120, 140), pygame.Rect(x, y, max(2, int(w * frac)), h), border_radius=3)

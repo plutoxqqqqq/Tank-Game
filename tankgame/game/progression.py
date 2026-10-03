@@ -263,7 +263,26 @@ class ProgressionMixin:
 
     # ---------------- Pickup collect ----------------
 
+    def _compact_xp_orbs(self):
+        """Fold far-away XP orbs together once the floor gets crowded. Total XP is preserved."""
+        orbs = [p for p in self.pickups if p.kind == "xp"]
+        if len(orbs) <= XP_ORB_SOFT_CAP:
+            return
+        ppos = self.player.pos
+        orbs.sort(key=lambda p: (p.pos - ppos).length_squared(), reverse=True)
+        excess = len(orbs) - XP_ORB_SOFT_CAP
+        far = orbs[:excess * 2]
+        merged = set()
+        for i in range(0, len(far) - 1, 2):
+            keep, gone = far[i], far[i + 1]
+            keep.value += gone.value
+            merged.add(id(gone))
+        if merged:
+            self.pickups = [p for p in self.pickups if id(p) not in merged]
+
     def _handle_pickup_collect(self, p: Pickup) -> bool:
+        if p.kind == "health" and self.player.hp >= self.player.max_hp:
+            return False   # leave it for later instead of wasting it at full HP
         if (self.player.pos - p.pos).length_squared() <= (PLAYER_RADIUS + p.radius()) ** 2:
             if p.kind == "xp":
                 self.player.gain_xp(p.value)

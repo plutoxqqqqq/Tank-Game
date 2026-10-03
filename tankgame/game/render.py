@@ -39,6 +39,7 @@ from tankgame.entities.drone import Drone
 from tankgame.entities.meteor import Meteor
 from tankgame.art.tank_art import draw_tank
 from tankgame.ui.widgets import Button, TabButton
+from tankgame.ui import glass
 
 
 
@@ -46,28 +47,80 @@ from tankgame.ui.widgets import Button, TabButton
 class RenderMixin:
 
     def draw_background(self):
-        self.screen.fill(C_BG)
         cam = self.cam + self.shake_vec
+        bg = getattr(self, "_arena_bg", None)
+        if bg is None or bg.get_size() != (WIDTH, HEIGHT):
+            bg = pygame.Surface((WIDTH, HEIGHT)).convert()
+            bg.blit(glass._vgrad((WIDTH, HEIGHT), (*C_BG_2, 255), (*C_BG, 255)), (0, 0))
+            self._arena_bg = bg
+        self.screen.blit(bg, (0, 0))
+
         start_x = int(cam.x // BG_GRID_SIZE) * BG_GRID_SIZE
         start_y = int(cam.y // BG_GRID_SIZE) * BG_GRID_SIZE
+        major = BG_GRID_SIZE * 4
+        major_col = (31, 37, 50)
+        for gx in range(start_x, int(cam.x) + WIDTH + BG_GRID_SIZE, BG_GRID_SIZE):
+            sx = int(gx - cam.x)
+            pygame.draw.line(self.screen, major_col if gx % major == 0 else C_GRID, (sx, 0), (sx, HEIGHT), 1)
+        for gy in range(start_y, int(cam.y) + HEIGHT + BG_GRID_SIZE, BG_GRID_SIZE):
+            sy = int(gy - cam.y)
+            pygame.draw.line(self.screen, major_col if gy % major == 0 else C_GRID, (0, sy), (WIDTH, sy), 1)
 
-        for x in range(start_x, int(cam.x) + WIDTH + BG_GRID_SIZE, BG_GRID_SIZE):
-            sx = x - cam.x
-            pygame.draw.line(self.screen, C_GRID, (sx, 0), (sx, HEIGHT), 1)
+        border = pygame.Rect(int(-cam.x), int(-cam.y), ARENA_W, ARENA_H)
+        pygame.draw.rect(self.screen, (40, 74, 82), border.inflate(6, 6), 3, border_radius=10)
+        pygame.draw.rect(self.screen, glass.GL_ACCENT, border, 1, border_radius=8)
 
-        for y in range(start_y, int(cam.y) + HEIGHT + BG_GRID_SIZE, BG_GRID_SIZE):
-            sy = y - cam.y
-            pygame.draw.line(self.screen, C_GRID, (0, sy), (WIDTH, sy), 1)
+    def _obstacle_surface(self, w: int, h: int) -> pygame.Surface:
+        cache = getattr(self, "_obstacle_cache", None)
+        if cache is None:
+            cache = self._obstacle_cache = {}
+        surf = cache.get((w, h))
+        if surf is None:
+            rad = min(10, w // 4, h // 4)
+            surf = pygame.Surface((w, h), pygame.SRCALPHA)
+            body = glass._vgrad((w, h), (34, 40, 54, 255), (19, 22, 30, 255))
+            body.blit(glass._round_mask((w, h), rad), (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+            surf.blit(body, (0, 0))
+            # Armoured plate: diagonal hazard hatching, an inset bevel and corner bolts, so cover
+            # reads as solid world geometry and never as a floating UI panel.
+            hatch = pygame.Surface((w, h), pygame.SRCALPHA)
+            for k in range(-h, w, 14):
+                pygame.draw.line(hatch, (255, 255, 255, 9), (k, h), (k + h, 0), 3)
+            hatch.blit(glass._round_mask((w, h), rad), (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+            surf.blit(hatch, (0, 0))
+            pygame.draw.rect(surf, (12, 14, 20, 255), surf.get_rect(), 2, border_radius=rad)
+            if w > 24 and h > 24:
+                inset = pygame.Rect(5, 5, w - 10, h - 10)
+                pygame.draw.rect(surf, (64, 76, 100, 255), inset, 1, border_radius=max(2, rad - 4))
+                pygame.draw.line(surf, (110, 126, 158, 200), (inset.x + 4, inset.y), (inset.right - 5, inset.y), 1)
+            if w >= 48 and h >= 48:
+                for bx, by in ((10, 10), (w - 11, 10), (10, h - 11), (w - 11, h - 11)):
+                    pygame.draw.circle(surf, (78, 90, 116), (bx, by), 3)
+                    pygame.draw.circle(surf, (20, 24, 32), (bx, by), 3, 1)
+            cache[(w, h)] = surf
+        return surf
 
-        border = pygame.Rect(-cam.x, -cam.y, ARENA_W, ARENA_H)
-        pygame.draw.rect(self.screen, (46, 53, 70), border, 2)
+    def _obstacle_shadow(self, w: int, h: int) -> pygame.Surface:
+        cache = getattr(self, "_obstacle_cache", None)
+        if cache is None:
+            cache = self._obstacle_cache = {}
+        key = ("shadow", w, h)
+        sh = cache.get(key)
+        if sh is None:
+            sh = pygame.Surface((w, h), pygame.SRCALPHA)
+            pygame.draw.rect(sh, (0, 0, 0, 70), sh.get_rect(), border_radius=10)
+            cache[key] = sh
+        return sh
 
     def draw_obstacles(self):
         cam = self.cam + self.shake_vec
+        view = pygame.Rect(int(cam.x) - 20, int(cam.y) - 20, WIDTH + 40, HEIGHT + 40)
         for r in self.obstacles:
-            rr = pygame.Rect(r.x - cam.x, r.y - cam.y, r.w, r.h)
-            pygame.draw.rect(self.screen, C_WALL, rr, border_radius=8)
-            pygame.draw.rect(self.screen, C_WALL_EDGE, rr, 1, border_radius=8)
+            if not r.colliderect(view):
+                continue
+            sx, sy = int(r.x - cam.x), int(r.y - cam.y)
+            self.screen.blit(self._obstacle_shadow(r.w, r.h), (sx + 5, sy + 7))
+            self.screen.blit(self._obstacle_surface(r.w, r.h), (sx, sy))
 
     def draw_pickup_indicators(self, t_seconds: float):
         cam = self.cam + self.shake_vec
@@ -79,8 +132,8 @@ class RenderMixin:
         inset = 22
         left = inset
         right = WIDTH - inset
-        top = inset
-        bottom = HEIGHT - inset
+        top = max(inset, getattr(self, "_hud_safe_top", 150))
+        bottom = min(HEIGHT - inset, getattr(self, "_hud_safe_bottom", HEIGHT - 60))
 
         def ray_to_screen_edge(o: Vector2, dirn: Vector2) -> Optional[Vector2]:
             """Return intersection point of ray o + t*dirn with inset screen rect."""
@@ -223,203 +276,207 @@ class RenderMixin:
         return None
 
     def draw_panel(self, rect: pygame.Rect, fill, edge=None, radius: int = 12, border: int = 1):
-        """Rounded panel that actually honours alpha.
-
-        pygame.draw.* ignores the alpha byte when blitting straight onto the display surface, so
-        the old "(*C_PANEL, 220)" HUD panels rendered fully opaque.
-        """
+        """Rounded panel that honours alpha (kept for any caller that passes explicit colours)."""
         s = pygame.Surface(rect.size, pygame.SRCALPHA)
         pygame.draw.rect(s, fill, s.get_rect(), border_radius=radius)
         if edge is not None:
             pygame.draw.rect(s, edge, s.get_rect(), border, border_radius=radius)
         self.screen.blit(s, rect.topleft)
 
+    def hud_panel(self, rect: pygame.Rect, accent=None, radius: int = 14):
+        """Frosted-glass HUD panel (no drop shadow - it sits over the live arena)."""
+        glass.panel(self.screen, rect, radius=radius, alpha=58, accent=accent,
+                    glow=accent is not None, shadow=False)
+
+    def hud_layout(self):
+        """Width-aware HUD geometry shared by the HUD and anything that must sit below it."""
+        avail = WIDTH - 2 * UI_PAD
+        left_w = int(clamp(avail * 0.40, 318, 446))
+        right_w = int(clamp(avail * 0.31, 270, 336))
+        return left_w, right_w
+
     def draw_hud(self):
         who = self.player
         x = UI_PAD
-        y = UI_PAD
-        y_top = y - 8
+        y_top = UI_PAD - 6
+        left_w, right_w = self.hud_layout()
 
         # ---------------- Left panel: vitals ----------------
-        per_row = 12
-        pr = 7
-        pip_gap = 6
-        row_step = 20
         mhp = max(1, int(who.max_hp))
-        hp = max(0, int(who.hp))
+        hp = max(0, int(math.ceil(who.hp - 1e-6)))
+        pr = 7
+        step = 2 * pr + 6
+        per_row = max(6, (left_w - 96 - 52) // step)
         rows = max(1, int(math.ceil(mhp / per_row)))
-
-        hp_row_y = y_top + 16
-        xp_y = hp_row_y + 18 + (rows - 1) * row_step
+        hp_row_y = y_top + 22
+        xp_y = hp_row_y + 16 + (rows - 1) * 20
         dash_y = xp_y + 24
         weapon_y = dash_y + 26
-
-        panel_w = 446
-        panel_h = max(128, weapon_y + 20 - y_top)
-        left_panel = pygame.Rect(x - 8, y_top, panel_w, panel_h)
-        self.draw_panel(left_panel, (*C_PANEL, 238), (*C_WALL_EDGE, 215), radius=14)
+        panel_h = max(124, weapon_y + 22 - y_top)
+        left_panel = pygame.Rect(x - 6, y_top, left_w, panel_h)
+        self.hud_panel(left_panel)
 
         bar_x = x + 66
-        bar_w = panel_w - 66 - 22
-
-        hp_col = C_HEALTH if hp > mhp * 0.34 else C_WARN
-        draw_text(self.screen, self.font_ui, "HP", (x + 6, y_top + 4), C_TEXT)
-        draw_text_right(self.screen, self.font_tiny, f"{hp}/{mhp}", (left_panel.right - 18, y_top + 10), hp_col, shadow=False)
-
+        bar_w = left_panel.right - 18 - bar_x
+        low = hp <= max(1, int(mhp * 0.34))
+        hp_col = glass.GL_BAD if not low else glass.lerp_color(glass.GL_WARN, glass.GL_BAD, glass.pulse(2.2))
+        glass.text(self.screen, "HP", 20, (x + 8, hp_row_y - 9), glass.GL_TEXT, bold=True)
+        glass.text(self.screen, f"{hp}/{mhp}", 16, (left_panel.right - 14, hp_row_y),
+                   hp_col, align="midright", bold=True)
         for i in range(mhp):
-            col_i = i % per_row
-            row_i = i // per_row
-            px = x + 64 + pr + col_i * (pr * 2 + pip_gap)
-            py = hp_row_y + row_i * row_step
+            px = x + 66 + pr + (i % per_row) * step
+            py = hp_row_y + (i // per_row) * 20
             if i < hp:
                 pygame.draw.circle(self.screen, hp_col, (px, py), pr)
-                circle_outline(self.screen, (255, 215, 230), (px, py), pr, 1)
+                pygame.draw.circle(self.screen, glass.lerp_color(hp_col, (255, 255, 255), 0.55),
+                                   (px - 2, py - 2), 2)
             else:
-                circle_outline(self.screen, (58, 66, 92), (px, py), pr, 2)
+                pygame.draw.circle(self.screen, (70, 80, 104), (px, py), pr, 2)
 
-        xp_bar = pygame.Rect(bar_x, xp_y, bar_w, 14)
-        pygame.draw.rect(self.screen, (10, 12, 18), xp_bar, border_radius=7)
         xp_frac = clamp(who.xp / max(1, who.xp_to_next), 0, 1)
-        if xp_frac > 0:
-            pygame.draw.rect(self.screen, C_XP, pygame.Rect(xp_bar.x, xp_bar.y, max(3, int(xp_bar.w * xp_frac)), xp_bar.h), border_radius=7)
-        pygame.draw.rect(self.screen, (60, 200, 120), xp_bar, 1, border_radius=7)
-        draw_text(self.screen, self.font_tiny, f"LVL {who.level}", (x + 6, xp_y), C_TEXT_DIM, shadow=False)
-        draw_text_right(self.screen, self.font_tiny, f"{int(who.xp)}/{who.xp_to_next} XP", (xp_bar.right - 8, xp_bar.y + 1), C_TEXT, shadow=False)
+        glass.text(self.screen, f"LV {who.level}", 16, (x + 8, xp_y), glass.GL_TEXT_DIM, bold=True)
+        glass.progress_bar(self.screen, pygame.Rect(bar_x, xp_y + 1, bar_w, 13), xp_frac, color=glass.GL_GOOD)
+        glass.text(self.screen, f"{int(who.xp)}/{who.xp_to_next} XP", 15,
+                   (bar_x + bar_w - 8, xp_y + 8), glass.GL_TEXT, align="midright")
 
-        dash_bar = pygame.Rect(bar_x, dash_y, bar_w, 14)
         dash_ready = who.dash_cd_timer <= 0.0
-        pygame.draw.rect(self.screen, (10, 12, 18), dash_bar, border_radius=7)
         dash_frac = 1.0 if dash_ready else clamp(1.0 - who.dash_cd_timer / max(0.01, who.get_dash_cooldown()), 0, 1)
-        dash_col = C_ACCENT if dash_ready else (108, 128, 172)
-        if dash_frac > 0:
-            pygame.draw.rect(self.screen, dash_col, pygame.Rect(dash_bar.x, dash_bar.y, max(3, int(dash_bar.w * dash_frac)), dash_bar.h), border_radius=7)
-        draw_text(self.screen, self.font_tiny, "DASH", (x + 6, dash_y), C_TEXT_DIM, shadow=False)
-        draw_text_right(self.screen, self.font_tiny,
-                        "READY [SPACE]" if dash_ready else f"{who.dash_cd_timer:.1f}s",
-                        (dash_bar.right - 8, dash_bar.y + 1),
-                        (12, 26, 22) if dash_ready else C_TEXT, shadow=False)
+        glass.text(self.screen, "DASH", 16, (x + 8, dash_y), glass.GL_TEXT_DIM, bold=True)
+        glass.progress_bar(self.screen, pygame.Rect(bar_x, dash_y + 1, bar_w, 13), dash_frac,
+                           color=glass.GL_ACCENT if dash_ready else (110, 130, 176))
+        glass.text(self.screen, "READY" if dash_ready else f"{who.dash_cd_timer:.1f}s", 15,
+                   (bar_x + bar_w - 8, dash_y + 8), (10, 22, 22) if dash_ready else glass.GL_TEXT,
+                   align="midright", bold=dash_ready)
 
-        draw_text(self.screen, self.font_small, who.weapon.name, (x + 6, weapon_y - 6), C_ACCENT, shadow=False)
-        draw_text_right(self.screen, self.font_tiny, f"{fmt_amount(who.get_damage())} DMG / SHOT",
-                        (left_panel.right - 18, weapon_y - 3), C_TEXT_DIM, shadow=False)
+        glass.text(self.screen, who.weapon.name, 20, (x + 8, weapon_y - 4), glass.GL_ACCENT, bold=True)
+        glass.text(self.screen, f"{fmt_amount(who.get_damage())} DMG / SHOT", 15,
+                   (left_panel.right - 14, weapon_y - 1), glass.GL_TEXT_DIM, align="right")
 
         # ---------------- Right panel: run stats ----------------
-        rp_w = 336
-        right_panel = pygame.Rect(WIDTH - UI_PAD - rp_w + 8, y_top, rp_w, panel_h)
-        self.draw_panel(right_panel, (*C_PANEL, 238), (*C_WALL_EDGE, 215), radius=14)
-
-        draw_text(self.screen, self.font_tiny, "SCORE", (right_panel.x + 16, y_top + 8), C_TEXT_DIM, shadow=False)
-        draw_text_right(self.screen, self.font_med, str(who.score), (right_panel.right - 16, y_top + 2), C_TEXT)
-
-        stats = (
-            ("WAVE", str(self.wave), C_ACCENT),
-            ("TIME", f"{int(self.survival_time)}s", C_TEXT),
-            ("COINS", str(self.save.coins), C_COIN),
-        )
+        right_panel = pygame.Rect(WIDTH - UI_PAD + 6 - right_w, y_top, right_w, panel_h)
+        self.hud_panel(right_panel)
+        glass.text(self.screen, "SCORE", 15, (right_panel.x + 16, y_top + 12), glass.GL_TEXT_FAINT, bold=True)
+        glass.text(self.screen, f"{who.score:,}", 30, (right_panel.right - 16, y_top + 7),
+                   glass.GL_TEXT, align="right", bold=True)
+        stats = (("WAVE", str(self.wave), glass.GL_ACCENT),
+                 ("TIME", f"{int(self.survival_time)}s", glass.GL_TEXT),
+                 ("COINS", f"{self.save.coins:,}", glass.GL_COIN))
         col_w = (right_panel.w - 32) // 3
         for i, (label, val, col) in enumerate(stats):
-            cxs = right_panel.x + 16 + i * col_w
-            draw_text(self.screen, self.font_tiny, label, (cxs, y_top + 32), C_TEXT_DIM, shadow=False)
-            draw_text(self.screen, self.font_ui, val, (cxs, y_top + 46), col, shadow=False)
+            sx = right_panel.x + 16 + i * col_w
+            glass.text(self.screen, label, 14, (sx, y_top + 38), glass.GL_TEXT_FAINT, bold=True)
+            glass.text(self.screen, glass.clip_text(val, 22, col_w - 6, bold=True), 22,
+                       (sx, y_top + 53), col, bold=True)
 
-        wave_bar = pygame.Rect(right_panel.x + 16, y_top + 82, right_panel.w - 32, 12)
-        pygame.draw.rect(self.screen, (10, 12, 18), wave_bar, border_radius=6)
         if self.in_boss_fight:
-            wave_frac, wave_col, wave_label = 1.0, C_ACCENT_2, "BOSS FIGHT"
+            wave_frac, wave_col, wave_label = 1.0, glass.GL_ACCENT_3, "BOSS FIGHT"
         elif self.boss_grace_timer > 0.0:
             wave_frac = clamp(self.boss_grace_timer / max(0.1, BOSS_GRACE_AFTER_DEATH), 0, 1)
-            wave_col, wave_label = C_OK, "FIELD CLEAR"
+            wave_col, wave_label = glass.GL_GOOD, "FIELD CLEAR"
         else:
-            wave_frac = clamp(1.0 - self.wave_timer / WAVE_TIME_BASE, 0, 1)
-            wave_col = C_ACCENT
-            wave_label = f"NEXT WAVE IN {max(0.0, self.wave_timer):.1f}s"
-        if wave_frac > 0:
-            pygame.draw.rect(self.screen, wave_col, pygame.Rect(wave_bar.x, wave_bar.y, max(3, int(wave_bar.w * wave_frac)), wave_bar.h), border_radius=6)
-        draw_text(self.screen, self.font_tiny, wave_label, (wave_bar.x, wave_bar.y - 16), C_TEXT_DIM, shadow=False)
-
-        # Which map you rolled, plus a live drone tally for the Nanite Swarm tank.
-        map_line = f"MAP: {self.current_map.name.upper()}"
+            wave_frac = clamp(1.0 - self.wave_timer / max(0.01, self.wave_time), 0, 1)
+            wave_col = glass.GL_ACCENT
+            wave_label = f"NEXT WAVE  {max(0.0, self.wave_timer):.1f}s"
+        wave_bar = pygame.Rect(right_panel.x + 16, y_top + 96, right_panel.w - 32, 10)
+        glass.text(self.screen, wave_label, 14, (wave_bar.x, wave_bar.y - 16), glass.GL_TEXT_DIM, bold=True)
+        glass.progress_bar(self.screen, wave_bar, wave_frac, color=wave_col)
+        map_line = f"MAP  {self.current_map.name.upper()}"
         if self.drones:
-            map_line += f"   \u2022   DRONES {len(self.drones)}"
-        draw_text(self.screen, self.font_tiny, map_line, (right_panel.x + 16, wave_bar.bottom + 8),
-                  C_TEXT_DIM, shadow=False)
+            map_line += f"   ·   DRONES {len(self.drones)}"
+        if wave_bar.bottom + 22 <= right_panel.bottom:
+            glass.text(self.screen, glass.clip_text(map_line, 14, right_panel.w - 32), 14,
+                       (right_panel.x + 16, wave_bar.bottom + 8), glass.GL_TEXT_FAINT)
 
         hud_bottom = max(left_panel.bottom, right_panel.bottom)
 
-        # Minigame objective strip, centred just under the panels.
+        # ---------------- Wave modifier chip: between the panels if it fits, else below ----------------
+        below_y = hud_bottom + 8
+        if self.wave_mutator is not None:
+            mut = self.wave_mutator
+            gap = right_panel.x - left_panel.right
+            chip_w = min(300, max(220, gap - 24))
+            if gap >= chip_w + 24:
+                chip = pygame.Rect((left_panel.right + right_panel.x) // 2 - chip_w // 2, y_top + 4, chip_w, 46)
+            else:
+                chip_w = min(320, WIDTH - 2 * UI_PAD)
+                chip = pygame.Rect(WIDTH // 2 - chip_w // 2, below_y, chip_w, 46)
+                below_y = chip.bottom + 8
+            glass.panel(self.screen, chip, radius=14, tint=mut.color, alpha=44,
+                        accent=mut.color, glow=True, shadow=False)
+            glass.text(self.screen, mut.name, 19, (chip.x + 14, chip.y + 6), mut.color, bold=True)
+            glass.text(self.screen, glass.clip_text(mut.desc, 15, chip.w - 28), 15,
+                       (chip.x + 14, chip.y + 26), glass.GL_TEXT_DIM)
+
+        # ---------------- Minigame objective strip ----------------
         if self.minigame is not None:
             mg = self.minigame
             if mg.duration > 0.0:
-                mg_txt = f"{mg.name.upper()}   \u2022   {max(0.0, mg.duration - self.minigame_time):0.1f}s"
+                mg_txt = f"{mg.name.upper()}   ·   {max(0.0, mg.duration - self.minigame_time):0.1f}s"
             else:
-                mg_txt = f"{mg.name.upper()}   \u2022   FIND THE EXIT"
-            draw_text(self.screen, self.font_small, mg_txt, (WIDTH // 2, hud_bottom + 6),
-                      mg.accent, center=True, shadow=True)
+                mg_txt = f"{mg.name.upper()}   ·   SURVIVE"
+            strip_w = min(420, WIDTH - 2 * UI_PAD)
+            strip = pygame.Rect(WIDTH // 2 - strip_w // 2, below_y, strip_w, 30)
+            glass.panel(self.screen, strip, radius=15, alpha=44, accent=mg.accent, shadow=False)
+            glass.text(self.screen, mg_txt, 18, strip.center, mg.accent, align="center", bold=True)
+            below_y = strip.bottom + 8
 
-        # ---------------- Boss bar: below the HUD panels, never over them ----------------
+        # ---------------- Boss bar ----------------
         boss = self._get_boss()
         if boss is not None:
-            bw = 560
-            bh = 16
-            bx = WIDTH // 2 - bw // 2
-            by = hud_bottom + 30
-            boss_panel = pygame.Rect(bx - 14, by - 26, bw + 28, bh + 40)
-            edge = C_ACCENT_2 if not boss.enraged else C_WARN
-            self.draw_panel(boss_panel, (*C_PANEL, 240), (*edge, 215), radius=12)
-
+            bw = min(560, WIDTH - 2 * UI_PAD - 28)
+            boss_panel = pygame.Rect(WIDTH // 2 - bw // 2 - 14, below_y, bw + 28, 52)
+            edge = glass.GL_ACCENT_3 if not boss.enraged else glass.GL_WARN
+            glass.panel(self.screen, boss_panel, radius=14, alpha=52, accent=edge, glow=True, shadow=False)
             frac = clamp(boss.hp / max(1.0, boss.hp_max), 0, 1)
-            draw_text(self.screen, self.font_small, "BOSS — ENRAGED" if boss.enraged else "BOSS",
-                      (boss_panel.x + 14, by - 22), edge, shadow=False)
-            draw_text_right(self.screen, self.font_small, f"{int(frac * 100)}%", (boss_panel.right - 14, by - 22), C_TEXT, shadow=False)
-
-            pygame.draw.rect(self.screen, (10, 10, 14), pygame.Rect(bx, by, bw, bh), border_radius=8)
-            fill_col = (255, 120, 140) if not boss.enraged else (255, 190, 80)
-            if frac > 0:
-                pygame.draw.rect(self.screen, fill_col, pygame.Rect(bx, by, max(2, int(bw * frac)), bh), border_radius=8)
-            pygame.draw.rect(self.screen, (255, 210, 220), pygame.Rect(bx, by, bw, bh), 2, border_radius=8)
+            glass.text(self.screen, "BOSS — ENRAGED" if boss.enraged else "BOSS", 18,
+                       (boss_panel.x + 14, boss_panel.y + 7), edge, bold=True)
+            glass.text(self.screen, f"{int(frac * 100)}%", 18, (boss_panel.right - 14, boss_panel.y + 7),
+                       glass.GL_TEXT, align="right", bold=True)
+            glass.progress_bar(self.screen, pygame.Rect(boss_panel.x + 14, boss_panel.y + 30, bw, 12),
+                               frac, color=(255, 120, 140) if not boss.enraged else (255, 190, 80))
+            below_y = boss_panel.bottom + 8
 
         # ---------------- Active power-up chips ----------------
-        chip_labels = {"damage_boost": "DMG", "rapid_fire": "RAPID", "speed_boost": "SPEED", "shield": "SHIELD"}
-        chip_cols = {
-            "damage_boost": (255, 120, 220),
-            "rapid_fire": (120, 255, 240),
-            "speed_boost": (140, 255, 160),
-            "shield": (200, 200, 255),
-        }
+        chip_labels = {"damage_boost": "DAMAGE", "rapid_fire": "RAPID", "speed_boost": "SPEED",
+                       "shield": "SHIELD", "drone_range": "DRONE RANGE"}
+        chip_cols = {"damage_boost": (255, 120, 220), "rapid_fire": (120, 255, 240),
+                     "speed_boost": (140, 255, 160), "shield": (200, 200, 255),
+                     "drone_range": (170, 255, 215)}
         active = [(k, v) for k, v in who.effects.items() if v > 0]
         if active:
-            chip_w = 124
+            reserve = 148 if who.auto_fire else 0
+            lane_l, lane_r = UI_PAD, WIDTH - UI_PAD - reserve
+            chip_w = min(140, (lane_r - lane_l - 8 * (len(active) - 1)) // len(active))
             total = len(active) * chip_w + (len(active) - 1) * 8
-            chip_x = WIDTH // 2 - total // 2
+            centre = WIDTH // 2 if (WIDTH // 2 + total // 2) <= lane_r else (lane_l + lane_r) // 2
+            chip_x = centre - total // 2
             for key, remaining in active:
-                col = chip_cols.get(key, C_ACCENT)
-                chip = pygame.Rect(chip_x, HEIGHT - 50, chip_w, 30)
-                self.draw_panel(chip, (*col, 46), (*col, 215), radius=9)
-                draw_text(self.screen, self.font_tiny, chip_labels.get(key, key.upper()),
-                          (chip.x + 9, chip.y + 5), col, shadow=False)
-                draw_text_right(self.screen, self.font_tiny, f"{remaining:.1f}s",
-                                (chip.right - 9, chip.y + 5), C_TEXT, shadow=False)
+                col = chip_cols.get(key, glass.GL_ACCENT)
+                chip = pygame.Rect(chip_x, HEIGHT - 52, chip_w, 34)
+                glass.panel(self.screen, chip, radius=12, tint=col, alpha=40, accent=col, shadow=False)
+                glass.text(self.screen, glass.clip_text(chip_labels.get(key, key.upper()), 15, chip_w - 56),
+                           15, (chip.x + 10, chip.centery), col, align="midleft", bold=True)
+                glass.text(self.screen, f"{remaining:.1f}s", 15, (chip.right - 10, chip.centery),
+                           glass.GL_TEXT, align="midright")
                 chip_x += chip_w + 8
-
-        # ---------------- Wave modifier chip (sits in the gap between the two panels) ----------------
-        if self.wave_mutator is not None:
-            mut = self.wave_mutator
-            chip_w = 264
-            chip = pygame.Rect((left_panel.right + right_panel.x) // 2 - chip_w // 2, y_top + 4, chip_w, 42)
-            self.draw_panel(chip, (*mut.color, 62), (*mut.color, 225), radius=10)
-            draw_text(self.screen, self.font_small, mut.name, (chip.x + 12, chip.y + 5), mut.color, shadow=False)
-            draw_text(self.screen, self.font_tiny, mut.desc, (chip.x + 12, chip.y + 23), C_TEXT_DIM, shadow=False)
 
         # ---------------- Auto-fire badge ----------------
         if who.auto_fire:
-            badge = pygame.Rect(WIDTH - 148, HEIGHT - 46, 132, 30)
-            self.draw_panel(badge, (*C_OK, 220), (*C_WALL_EDGE, 220), radius=12)
-            rect_centered_text(self.screen, self.font_small, "AUTO FIRE", badge, (12, 26, 14), shadow=False)
+            badge = pygame.Rect(WIDTH - UI_PAD - 136, HEIGHT - 52, 136, 34)
+            glass.badge(self.screen, badge, "AUTO FIRE", color=glass.GL_GOOD, size=17)
 
         # ---------------- Wave / boss banner ----------------
+        # Keep world-space markers (boss tracker, power-up arrows) clear of the HUD next frame.
+        self._hud_safe_top = below_y
+        self._hud_safe_bottom = HEIGHT - 60 if (active or who.auto_fire) else HEIGHT - 26
+
         if self.wave_banner_timer > 0.0 and self.wave_banner_text:
-            draw_text(self.screen, self.font_med, self.wave_banner_text, (WIDTH // 2, 236),
-                      C_ACCENT_2 if "BOSS" in self.wave_banner_text else C_TEXT, center=True)
+            fade = clamp(self.wave_banner_timer / 0.35, 0.0, 1.0)
+            col = glass.GL_ACCENT_3 if "BOSS" in self.wave_banner_text else glass.GL_TEXT
+            size = 40 if below_y + 28 <= HEIGHT // 2 - 44 else 30
+            banner_y = max(int(HEIGHT * 0.36), below_y + (28 if size == 40 else 22))
+            glass.text(self.screen, self.wave_banner_text, size, (WIDTH // 2, banner_y),
+                       col, align="center", bold=True, glow=True, alpha=int(255 * fade))
 
     def draw_boss_tracker(self):
         """Off-screen tracker: a subtle transparent line from the PLAYER toward the boss.
@@ -449,8 +506,8 @@ class RenderMixin:
         inset = 26  # pull endpoint inside screen so label always fits
         left = inset
         right = WIDTH - inset
-        top = inset
-        bottom = HEIGHT - inset
+        top = max(inset, getattr(self, "_hud_safe_top", 150) + 18)
+        bottom = min(HEIGHT - inset, getattr(self, "_hud_safe_bottom", HEIGHT - 60))
 
         t_candidates = []
 
