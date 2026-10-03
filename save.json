@@ -1,0 +1,439 @@
+{
+  "coins": 13306291,
+  "shop_levels": {
+    "meta_damage": 4,
+    "meta_move": 0,
+    "meta_hp": 0,
+    "meta_xp": 1,
+    "meta_dash": 0,
+    "meta_armor": 0,
+    "meta_bulletspeed": 0
+  },
+  "weapon_unlocks": {
+    "pistol": true,
+    "cannon": true,
+    "minigun": true,
+    "shotgun": true,
+    "rocket": true,
+    "sniper": true,
+    "flamethrower": true,
+    "windscreen_wiper": true,
+    "electricity": true,
+    "tank": true,
+    "ricochet": true,
+    "mine_layer": true,
+    "siphon": true,
+    "gravity_well": true,
+    "prism": true,
+    "nanite_swarm": true,
+    "railgun": true,
+    "hypnosis": true,
+    "homing": true
+  },
+  "map_unlocks": {
+    "classic": true,
+    "open_field": true,
+    "crowded": true,
+    "pillars": true,
+    "maze": true,
+    "fortress": true
+  },
+  "minigame_clears": {
+    "ultra_only": 3,
+    "impossible": 2
+  },
+  "minigame_best": {
+    "ultra_only": 1.0,
+    "impossible": 1.0,
+    "rapid": 0.8200250000002083,
+    "nightmare": 0.8278055555557005
+  },
+  "selected_weapon": "pistol",
+  "cosmetic_outline_alt": true,
+  "bundles_purchased": {},
+  "cosmetics_unlocked": {
+    "outline_standard": true,
+    "outline_neon": true,
+    "outline_ember": true,
+    "outline_steel": true,
+    "bullet_standard": true,
+    "bullet_mint": true,
+    "bullet_violet": true,
+    "bullet_gold": true,
+    "trail_none": true,
+    "trail_spark": true,
+    "trail_ion": true,
+    "explosion_ember": true,
+    "explosion_plasma": true,
+    "explosion_magma": true
+  },
+  "cosmetics_equipped": {
+    "outline": "outline_neon",
+    "bullet": "bullet_standard",
+    "trail": "trail_none",
+    "explosion": "explosion_ember"
+  },
+  "daily_challenges": {
+    "key": "2026-270",
+    "generated_at": 1790481142,
+    "items": [
+      {
+        "id": "daily_kills",
+        "name": "Clear the Field",
+        "desc": "Defeat 60 enemies.",
+        "target": 60,
+        "reward": 20,
+        "metric": "kills",
+        "progress": 952,
+        "claimed": true
+      },
+      {
+        "id": "daily_run",
+        "name": "Warm-Up Run",
+        "desc": "Complete 2 runs.",
+        "target": 2,
+        "reward": 5,
+        "metric": "runs",
+        "progress": 25,
+        "claimed": true
+      },
+      {
+        "id": "daily_weapon_shotgun",
+        "name": "Weapon Focus: Shotgun",
+        "desc": "Defeat 38 enemies using Shotgun.",
+        "target": 38,
+        "reward": 25,
+        "metric": "weapon_kills",
+        "weapon_id": "shotgun",
+        "progress": 0,
+        "claimed": false
+      }
+    ]
+  },
+  "weekly_challenges": {
+    "key": "2026-39",
+    "generated_at": 1790315816,
+    "items": [
+      {
+        "id": "weekly_runs",
+        "name": "Weekend Warrior",
+        "desc": "Complete 12 runs.",
+        "target": 12,
+        "reward": 70,
+        "metric": "runs",
+        "progress": 61,
+        "claimed": true
+      },
+      {
+        "id": "weekly_boss",
+        "name": "Boss Hunter",
+        "desc": "Defeat 5 bosses.",
+        "target": 5,
+        "reward": 110,
+        "metric": "boss_kills",
+        "progress": 165,
+        "claimed": true
+      }
+    ]
+  },
+  "weapon_mastery": {
+    "pistol": {
+      "level": 0,
+      "hits": 3057,
+      "total_kills": 876,
+      "total_wins": 4,
+      "level_kills": 876,
+      "level_wins": 4,
+      "req_kills": 30,
+      "req_wins": 5
+    },
+    "cannon": {
+      "level": 0,
+      "hits": 0,
+      "total_kills": 0,
+      "total_wins": 0,
+      "level_kills": 0,
+      "level_wins": 0,
+      "req_kills": 30,
+      "req_wins": 5
+    },
+    "minigun": {
+      "level": 1,
+      "hits": 17317,
+      "total_kills": 562,
+      "total_wins": 5,
+      "level_kills": 36,
+      "level_wins": 0,
+      "req_kills": 120,
+      "req_wins": 12
+    },
+    "burst": {
+      "level": 0,
+      "hits": 0,
+      "total_kills": 0,
+      "total_wins": 0,
+      "level_kills": 0,
+      "level_wins": 0,
+      "req_kills": 30,
+      "req_wins": 5
+    },
+    "shotgun": {
+      "level": 0,
+      "hits": 0,
+      "total_kills": 0,
+      "total_wins": 0,
+      "level_kills": 0,
+      "level_wins": 0,
+      "req_kills": 30,
+      "req_wins": 5
+    },
+    "rocket": {
+      "level": 0,
+      "hits": 0,
+      "total_kills": 0,
+      "total_wins": 0,
+      "level_kills": 0,
+      "level_wins": 0,
+      "req_kills": 30,
+      "req_wins": 5
+    },
+    "tesla": {
+      "level": 0,
+      "hits": 0,
+      "total_kills": 0,
+      "total_wins": 0,
+      "level_kills": 0,
+      "level_wins": 0,
+      "req_kills": 30,
+      "req_wins": 5
+    },
+    "sniper": {
+      "level": 0,
+      "hits": 0,
+      "total_kills": 0,
+      "total_wins": 0,
+      "level_kills": 0,
+      "level_wins": 0,
+      "req_kills": 30,
+      "req_wins": 5
+    },
+    "flamethrower": {
+      "level": 1,
+      "hits": 22133,
+      "total_kills": 683,
+      "total_wins": 6,
+      "level_kills": 375,
+      "level_wins": 1,
+      "req_kills": 120,
+      "req_wins": 12
+    },
+    "omni_pistol": {
+      "level": 0,
+      "hits": 0,
+      "total_kills": 0,
+      "total_wins": 0,
+      "level_kills": 0,
+      "level_wins": 0,
+      "req_kills": 30,
+      "req_wins": 5
+    },
+    "windscreen_wiper": {
+      "level": 1,
+      "hits": 24232,
+      "total_kills": 603,
+      "total_wins": 8,
+      "level_kills": 107,
+      "level_wins": 3,
+      "req_kills": 120,
+      "req_wins": 12
+    },
+    "electricity": {
+      "level": 0,
+      "hits": 3652,
+      "total_kills": 372,
+      "total_wins": 3,
+      "level_kills": 372,
+      "level_wins": 3,
+      "req_kills": 30,
+      "req_wins": 5
+    },
+    "tank": {
+      "level": 0,
+      "hits": 938,
+      "total_kills": 734,
+      "total_wins": 2,
+      "level_kills": 734,
+      "level_wins": 2,
+      "req_kills": 30,
+      "req_wins": 5
+    },
+    "cryo_cannon": {
+      "level": 0,
+      "hits": 0,
+      "total_kills": 0,
+      "total_wins": 0,
+      "level_kills": 0,
+      "level_wins": 0,
+      "req_kills": 30,
+      "req_wins": 5
+    },
+    "ricochet": {
+      "level": 0,
+      "hits": 18,
+      "total_kills": 6,
+      "total_wins": 1,
+      "level_kills": 6,
+      "level_wins": 1,
+      "req_kills": 30,
+      "req_wins": 5
+    },
+    "mine_layer": {
+      "level": 0,
+      "hits": 222,
+      "total_kills": 128,
+      "total_wins": 2,
+      "level_kills": 128,
+      "level_wins": 2,
+      "req_kills": 30,
+      "req_wins": 5
+    },
+    "siphon": {
+      "level": 0,
+      "hits": 2651,
+      "total_kills": 608,
+      "total_wins": 1,
+      "level_kills": 608,
+      "level_wins": 1,
+      "req_kills": 30,
+      "req_wins": 5
+    },
+    "gravity_well": {
+      "level": 0,
+      "hits": 281,
+      "total_kills": 109,
+      "total_wins": 1,
+      "level_kills": 109,
+      "level_wins": 1,
+      "req_kills": 30,
+      "req_wins": 5
+    },
+    "prism": {
+      "level": 0,
+      "hits": 104,
+      "total_kills": 34,
+      "total_wins": 1,
+      "level_kills": 34,
+      "level_wins": 1,
+      "req_kills": 30,
+      "req_wins": 5
+    },
+    "nanite_swarm": {
+      "level": 1,
+      "hits": 5826,
+      "total_kills": 740,
+      "total_wins": 9,
+      "level_kills": 333,
+      "level_wins": 4,
+      "req_kills": 120,
+      "req_wins": 12
+    },
+    "railgun": {
+      "level": 0,
+      "hits": 294,
+      "total_kills": 214,
+      "total_wins": 1,
+      "level_kills": 214,
+      "level_wins": 1,
+      "req_kills": 30,
+      "req_wins": 5
+    },
+    "hypnosis": {
+      "level": 0,
+      "hits": 130,
+      "total_kills": 52,
+      "total_wins": 2,
+      "level_kills": 52,
+      "level_wins": 2,
+      "req_kills": 30,
+      "req_wins": 5
+    },
+    "homing": {
+      "level": 0,
+      "hits": 119,
+      "total_kills": 35,
+      "total_wins": 1,
+      "level_kills": 35,
+      "level_wins": 1,
+      "req_kills": 30,
+      "req_wins": 5
+    }
+  },
+  "settings": {
+    "audio": true,
+    "shake": true,
+    "damage_numbers": true,
+    "fullscreen": false
+  },
+  "leaderboard": [
+    {
+      "score": 14493,
+      "time": 717,
+      "wave": 40,
+      "level": 18
+    },
+    {
+      "score": 12960,
+      "time": 639,
+      "wave": 37,
+      "level": 17
+    },
+    {
+      "score": 5942,
+      "time": 467,
+      "wave": 24,
+      "level": 15
+    },
+    {
+      "score": 5308,
+      "time": 426,
+      "wave": 22,
+      "level": 13
+    },
+    {
+      "score": 4964,
+      "time": 310,
+      "wave": 20,
+      "level": 13
+    },
+    {
+      "score": 4743,
+      "time": 428,
+      "wave": 20,
+      "level": 13
+    },
+    {
+      "score": 3111,
+      "time": 236,
+      "wave": 15,
+      "level": 10
+    },
+    {
+      "score": 1696,
+      "time": 230,
+      "wave": 12,
+      "level": 9
+    },
+    {
+      "score": 1378,
+      "time": 161,
+      "wave": 10,
+      "level": 8
+    },
+    {
+      "score": 924,
+      "time": 140,
+      "wave": 9,
+      "level": 7
+    }
+  ]
+}
