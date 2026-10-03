@@ -1,0 +1,727 @@
+"""Game core: construction, menus, state machine and the main loop."""
+from __future__ import annotations
+
+import math
+import random
+import sys
+import time
+import traceback
+from typing import Dict, List, Optional, Tuple
+
+import pygame
+from pygame.math import Vector2
+
+from tankgame.config import *
+from tankgame.util import *
+from tankgame.ui.text import *
+from tankgame.audio import *
+from tankgame.save import SaveManager
+from tankgame.data.weapons import WEAPONS
+from tankgame.data.traits import TRAITS, trait_of, TraitDef
+from tankgame.data.upgrades import UPGRADES, UPGRADES_BY_ID, UpgradeDef
+from tankgame.data.shop import (SHOP_ITEMS, SHOP_ITEMS_BY_ID, SHOP_ITEMS_BY_WEAPON,
+                                SHOP_ITEMS_BY_MAP, ShopItemDef, COSMETICS, COSMETICS_BY_ID,
+                                DEFAULT_COSMETICS, BUNDLES, CosmeticDef, BundleDef,
+                                BUNDLE_ONLY_COSMETIC_VALUE)
+from tankgame.data.maps import MAPS, MAPS_BY_ID, MapDef, map_of
+from tankgame.data.mutators import MUTATORS, MUTATORS_BY_ID, MutatorDef
+from tankgame.data.minigames import (MINIGAMES, MINIGAMES_BY_ID, MinigameDef,
+                                      METEOR_TELEGRAPH_START, METEOR_TELEGRAPH_END,
+                                      METEOR_RADIUS, METEOR_MAX_ACTIVE)
+from tankgame.data.mastery import MAX_MASTERY_LEVEL, mastery_requirements
+from tankgame.entities.player import Player
+from tankgame.entities.enemies import (EnemyBase, Chaser, Ranged, Tank, Sprinter, Dasher,
+                                        Pink, Boss)
+from tankgame.entities.projectile import Projectile
+from tankgame.entities.pickup import Pickup
+from tankgame.entities.fx import Particle, FloatingText
+from tankgame.entities.drone import Drone
+from tankgame.entities.meteor import Meteor
+from tankgame.art.tank_art import draw_tank
+from tankgame.ui.widgets import Button, TabButton
+from tankgame.game.anticheat import AntiCheat, run_guard, run_tick
+
+
+
+
+class AppMixin:
+
+    def __init__(self):
+        pygame.init()
+        pygame.display.set_caption(TITLE)
+        # SCALED keeps the whole game at a fixed 1100x650 logical size while the window is stretched
+        # to the monitor, so fullscreen needs no layout maths anywhere else in the codebase.
+        self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
+        self.clock = pygame.time.Clock()
+
+        # Fonts
+        self.font_big = pygame.font.Font(None, 64)
+        self.font_med = pygame.font.Font(None, 34)
+        self.font_ui = pygame.font.Font(None, 26)
+        self.font_small = pygame.font.Font(None, 20)
+        self.font_tiny = pygame.font.Font(None, 18)
+
+        self.font_shop_title = pygame.font.Font(None, 42)
+        self.font_shop_item = pygame.font.Font(None, 28)
+        self.font_shop_desc = pygame.font.Font(None, 22)
+        self.font_shop_small = pygame.font.Font(None, 20)
+
+        self.save = SaveManager(SAVE_PATH)
+        # Future-proof: ensure save knows about every WEAPONS key (so new weapons never "vanish")
+        if self.save.ensure_weapons(list(WEAPONS.keys())):
+            self.save.save()
+        if self.save.ensure_maps(list(MAPS_BY_ID.keys())):
+            self.save.save()
+        if self.save.ensure_cosmetics(COSMETICS):
+            self.save.save()
+        if self.save.ensure_mastery(list(WEAPONS.keys())):
+            self.save.save()
+        self.apply_display_mode()
+
+        # Audio
+        self.audio_enabled = AUDIO_ENABLED_DEFAULT and bool(self.save.settings.get("audio", True))
+        self.sounds: Dict[str, Optional[pygame.mixer.Sound]] = {
+            "shoot": None,
+            "hit": None,
+            "levelup": None,
+            "enemy_shoot": None,
+            "dash": None,
+            "powerup": None,
+            "buy": None,
+        }
+        self._init_audio()
+
+        # State
+        self.state = "menu"  # menu, weapons, shop, settings, controls, leaderboard, challenges, playing, paused, levelup, gameover
+        self.running = True
+
+        # Camera
+        self.cam = Vector2(0, 0)
+        self.shake = 0.0
+        self.shake_vec = Vector2(0, 0)
+
+        # Entities
+        self.player = Player(Vector2(ARENA_W / 2, ARENA_H / 2), weapon_id=self.save.selected_weapon)
+        self.player.outline_color = self.get_outline_color()
+        self.anticheat = AntiCheat(self)
+        self._referee = self.anticheat
+        self.projectiles: List[Projectile] = []
+        self.enemy_projectiles: List[Projectile] = []
+        self.enemies: List[EnemyBase] = []
+        self.pickups: List[Pickup] = []
+        self.particles: List[Particle] = []
+        self.float_texts: List[FloatingText] = []
+
+        # Boss state
+        self.in_boss_fight = False
+        self.boss_alive = False
+        self.boss_grace_timer = 0.0
+        self.run_bonus_coins = 0  # banked during run; added on gameover
+
+        # World
+        self.obstacles: List[pygame.Rect] = []
+        self.current_map: MapDef = map_of(MAP_DEFAULT_ID)
+        self._generate_obstacles()
+
+        # Orbiting drones (Nanite Swarm), rebuilt each frame to match the tank's drone count.
+        self.drones: List[Drone] = []
+        self.drone_phase = 0.0          # shared orbit angle so drones stay evenly spaced
+        self.mouse_world = Vector2(0, 0)
+
+        # Minigames (see MINIGAMES): a short challenge with its own win condition and payout.
+        self.minigame: Optional[MinigameDef] = None
+        self.minigame_time = 0.0
+        self.minigame_progress = 0.0
+        self.minigame_result: Optional[Dict[str, object]] = None
+        self.meteors: List[Meteor] = []
+        self.meteor_cd = 0.0
+        # Persistent floor effects (Flamethrower "Ashen Ground" ultra).
+        self.hazards: List[Dict[str, object]] = []
+        self.dash_only = False
+        self.mg_play_buttons: List[Tuple[pygame.Rect, MinigameDef]] = []
+        self.mg_back_btn: Optional[Button] = None
+
+        # Run metrics
+        self.survival_time = 0.0
+        self.run_stats: Dict[str, float] = {}
+        self.burn_credit = 0.0
+        self.reset_run_stats()
+        self.wave = 1
+        self.wave_time = WAVE_TIME_BASE
+        self.wave_timer = self.wave_time
+        self.spawn_timer = 0.0
+        self.spawn_interval = SPAWN_RATE_BASE
+        self.wave_mutator: Optional[MutatorDef] = None
+        self.last_mutator_id = ""
+
+        # Difficulty
+        self.difficulty = 0.0
+        self.diff_eased = 0.0
+
+        # Powerup spawn timer
+        self.powerup_timer = random.uniform(POWERUP_SPAWN_MIN, POWERUP_SPAWN_MAX)
+
+        # UI
+        self.menu_buttons: List[Button] = []
+        self.shop_back_btn: Optional[Button] = None
+        self.controls_back_btn: Optional[Button] = None
+        self.weapon_back_btn: Optional[Button] = None
+        self.leaderboard_back_btn: Optional[Button] = None
+        self.settings_back_btn: Optional[Button] = None
+        self.challenges_back_btn: Optional[Button] = None
+        self.challenges_view = "daily"
+        self.challenge_tabs: List[TabButton] = []
+        self.pause_buttons: List[Button] = []
+        self.gameover_buttons: List[Button] = []
+
+        # Shop tabs/pages
+        self.shop_tab = "meta"      # meta / weapons / cosmetics / bundles
+        self.shop_page = 0
+        self.shop_tabs: List[TabButton] = []
+        self.shop_next_btn: Optional[Button] = None
+        self.shop_prev_btn: Optional[Button] = None
+        self.cosmetics_category = "outline"
+        self.cosmetic_tabs: List[TabButton] = []
+
+        # Weapons screen pagination
+        self.weapon_page = 0
+        self.weapon_next_btn: Optional[Button] = None
+        self.weapon_prev_btn: Optional[Button] = None
+        self.weapon_notice_text = ""
+        self.weapon_notice_timer = 0.0
+        self.weapons_view = "weapons"
+        self.weapon_tabs: List[TabButton] = []
+        self.mastery_error_logged = False
+
+        self.progress_dirty = False
+        self.progress_dirty_timer = 0.0
+        self.trail_timer = 0.0
+        self.counted_game = False
+        self.challenge_refresh_timer = 0.0
+
+        # Run presentation / queues
+        self.pending_levelups = 0
+        self.level_choices: List[UpgradeDef] = []
+        self.level_cards: List[Tuple[pygame.Rect, UpgradeDef]] = []
+        self.wave_banner_text = ""
+        self.wave_banner_timer = 0.0
+        self.best_score_at_start = 0
+        self.new_best = False
+        self.sfx_timers: Dict[str, float] = {}
+        self.fx_overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+
+        self.last_run_coins_earned = 0
+        self.coins_awarded_this_gameover = False
+        self.leaderboard_recorded = False
+
+        self.refresh_challenges()
+
+        self._build_menus()
+
+    # ---------------- Audio ----------------
+
+    def _init_audio(self):
+        try:
+            pygame.mixer.init(frequency=44100, size=-16, channels=1, buffer=512)
+        except Exception:
+            self.audio_enabled = False
+            return
+
+        self.sounds["shoot"] = load_optional_sound("shoot.wav") or generate_tone_sound(740, 0.05, 0.22)
+        self.sounds["hit"] = load_optional_sound("hit.wav") or generate_tone_sound(190, 0.06, 0.25)
+        self.sounds["levelup"] = load_optional_sound("levelup.wav") or generate_tone_sound(980, 0.12, 0.25)
+        self.sounds["enemy_shoot"] = load_optional_sound("enemy_shoot.wav") or generate_tone_sound(420, 0.07, 0.20)
+        self.sounds["dash"] = load_optional_sound("dash.wav") or generate_tone_sound(330, 0.08, 0.22)
+        self.sounds["powerup"] = load_optional_sound("powerup.wav") or generate_tone_sound(620, 0.10, 0.23)
+        self.sounds["buy"] = load_optional_sound("buy.wav") or generate_tone_sound(840, 0.08, 0.22)
+
+    def audio_play(self, name: str, min_interval: float = SFX_MIN_INTERVAL):
+        """Play a cue, throttled so rapid-fire weapons can't machine-gun the mixer."""
+        if not self.audio_enabled:
+            return
+        now = time.time()
+        if min_interval > 0.0 and (now - self.sfx_timers.get(name, -9.0)) < min_interval:
+            return
+        self.sfx_timers[name] = now
+        s = self.sounds.get(name)
+        if s:
+            try:
+                s.play()
+            except Exception:
+                pass
+
+    # ---------------- World ----------------
+
+    def _build_menus(self):
+        cx = WIDTH // 2
+        full_w, full_h = 336, 50
+        half_w, half_h = 163, 44
+        left_x = cx - 168
+        right_x = left_x + half_w + 10
+        top = 240
+        row_gap = 8
+        row2 = top + full_h + row_gap
+        row3 = row2 + half_h + row_gap
+        row4 = row3 + half_h + row_gap
+        row5 = row4 + half_h + row_gap
+
+        # Two-column grid below Start Run: everything is reachable without overlapping the footer.
+        self.menu_buttons = [
+            Button(pygame.Rect(left_x, top, full_w, full_h), "Start Run", self.start_run, hotkey=pygame.K_RETURN),
+            Button(pygame.Rect(left_x, row2, half_w, half_h), "Weapons", self.open_weapons_screen, small=True),
+            Button(pygame.Rect(right_x, row2, half_w, half_h), "Shop", self.open_shop, small=True),
+            Button(pygame.Rect(left_x, row3, half_w, half_h), "Minigames", self.open_minigames, small=True),
+            Button(pygame.Rect(right_x, row3, half_w, half_h), "Challenges", self.open_challenges, small=True),
+            Button(pygame.Rect(left_x, row4, half_w, half_h), "Leaderboard", self.open_leaderboard, small=True),
+            Button(pygame.Rect(right_x, row4, half_w, half_h), "Settings", self.open_settings, small=True),
+            Button(pygame.Rect(left_x, row5, full_w, full_h), "Controls", lambda: self.set_state("controls"), small=True),
+        ]
+        self.menu_quit_btn = Button(
+            pygame.Rect(20, 18, 54, 48),
+            "X",
+            self.quit_game
+        )
+
+        self.weapon_back_btn = Button(pygame.Rect(40, HEIGHT - 80, 220, 52), "Back", lambda: self.set_state("menu"))
+        self.shop_back_btn = Button(pygame.Rect(40, HEIGHT - 80, 220, 52), "Back", lambda: self.set_state("menu"))
+        self.leaderboard_back_btn = Button(pygame.Rect(40, HEIGHT - 80, 220, 52), "Back", lambda: self.set_state("menu"))
+        self.settings_back_btn = Button(pygame.Rect(40, HEIGHT - 80, 220, 52), "Back", lambda: self.set_state("menu"))
+        self.challenges_back_btn = Button(pygame.Rect(40, HEIGHT - 80, 220, 52), "Back", lambda: self.set_state("menu"))
+        self.controls_back_btn = Button(pygame.Rect(40, HEIGHT - 80, 220, 52), "Back", lambda: self.set_state("menu"))
+
+        # Weapons pagination buttons (bottom-right)
+        self.weapon_prev_btn = Button(pygame.Rect(WIDTH - 300, HEIGHT - 80, 120, 52), "Prev", lambda: self.change_weapon_page(-1))
+        self.weapon_next_btn = Button(pygame.Rect(WIDTH - 170, HEIGHT - 80, 120, 52), "Next", lambda: self.change_weapon_page(+1))
+
+        # Pause + game over use their own centred stacks (the old layout ran under the footer
+        # text on the menu and under the game over stats panel).
+        pb_w, pb_h = 336, 54
+        pb_x = cx - pb_w // 2
+        self.pause_buttons = [
+            Button(pygame.Rect(pb_x, 250, pb_w, pb_h), "Resume", lambda: self.set_state("playing")),
+            Button(pygame.Rect(pb_x, 316, pb_w, pb_h), "Restart", self.restart_run),
+            Button(pygame.Rect(pb_x, 382, pb_w, pb_h), "Quit to Menu", self.abandon_run),
+        ]
+
+        self.gameover_buttons = [
+            Button(pygame.Rect(pb_x, 430, pb_w, pb_h), "Restart (R)", self.start_run, hotkey=pygame.K_r),
+            Button(pygame.Rect(pb_x, 496, pb_w, pb_h), "Menu", lambda: self.set_state("menu")),
+        ]
+
+        # Shop tabs
+        tab_y = 120
+        tab_w = 138
+        tab_h = 44
+        tab_gap = 10
+        start_x = (WIDTH - (tab_w * 5 + tab_gap * 4)) // 2
+
+        def set_tab(tid: str):
+            self.shop_tab = tid
+            self.shop_page = 0
+            if tid == "cosmetics":
+                self.cosmetics_category = "outline"
+
+        self.shop_tabs = [
+            TabButton(pygame.Rect(start_x + (tab_w + tab_gap) * 0, tab_y, tab_w, tab_h), "META", set_tab, "meta"),
+            TabButton(pygame.Rect(start_x + (tab_w + tab_gap) * 1, tab_y, tab_w, tab_h), "WEAPONS", set_tab, "weapons"),
+            TabButton(pygame.Rect(start_x + (tab_w + tab_gap) * 2, tab_y, tab_w, tab_h), "MAPS", set_tab, "maps"),
+            TabButton(pygame.Rect(start_x + (tab_w + tab_gap) * 3, tab_y, tab_w, tab_h), "COSMETICS", set_tab, "cosmetics"),
+            TabButton(pygame.Rect(start_x + (tab_w + tab_gap) * 4, tab_y, tab_w, tab_h), "BUNDLES", set_tab, "bundles"),
+        ]
+
+        self.shop_prev_btn = Button(pygame.Rect(WIDTH - 300, HEIGHT - 80, 120, 52), "Prev", lambda: self.change_shop_page(-1))
+        self.shop_next_btn = Button(pygame.Rect(WIDTH - 170, HEIGHT - 80, 120, 52), "Next", lambda: self.change_shop_page(+1))
+
+        # Cosmetics tabs
+        ctab_y = 170
+        ctab_w = 160
+        ctab_h = 36
+        ctab_gap = 12
+        ctab_start_x = (WIDTH - (ctab_w * 4 + ctab_gap * 3)) // 2
+
+        def set_cosmetic_category(category: str):
+            self.cosmetics_category = category
+            self.shop_page = 0
+
+        self.cosmetic_tabs = [
+            TabButton(pygame.Rect(ctab_start_x + (ctab_w + ctab_gap) * 0, ctab_y, ctab_w, ctab_h), "OUTLINE", set_cosmetic_category, "outline"),
+            TabButton(pygame.Rect(ctab_start_x + (ctab_w + ctab_gap) * 1, ctab_y, ctab_w, ctab_h), "BULLETS", set_cosmetic_category, "bullet"),
+            TabButton(pygame.Rect(ctab_start_x + (ctab_w + ctab_gap) * 2, ctab_y, ctab_w, ctab_h), "TRAILS", set_cosmetic_category, "trail"),
+            TabButton(pygame.Rect(ctab_start_x + (ctab_w + ctab_gap) * 3, ctab_y, ctab_w, ctab_h), "EXPLOSION", set_cosmetic_category, "explosion"),
+        ]
+
+        # Weapons tabs
+        wtab_y = 108
+        wtab_w = 190
+        wtab_h = 40
+        wtab_gap = 14
+        wtab_start_x = (WIDTH - (wtab_w * 2 + wtab_gap)) // 2
+        def set_weapon_view(view: str):
+            self.weapons_view = view
+            self.weapon_page = 0
+        self.weapon_tabs = [
+            TabButton(pygame.Rect(wtab_start_x, wtab_y, wtab_w, wtab_h), "WEAPONS", set_weapon_view, "weapons"),
+            TabButton(pygame.Rect(wtab_start_x + wtab_w + wtab_gap, wtab_y, wtab_w, wtab_h), "MASTERY", set_weapon_view, "mastery"),
+        ]
+
+        # Challenges tabs
+        ctab_y = 168
+        ctab_w = 200
+        ctab_h = 40
+        ctab_gap = 14
+        ctab_start_x = (WIDTH - (ctab_w * 2 + ctab_gap)) // 2
+
+        def set_challenges_view(view: str):
+            self.challenges_view = view
+
+        self.challenge_tabs = [
+            TabButton(pygame.Rect(ctab_start_x, ctab_y, ctab_w, ctab_h), "DAILY", set_challenges_view, "daily"),
+            TabButton(pygame.Rect(ctab_start_x + ctab_w + ctab_gap, ctab_y, ctab_w, ctab_h), "WEEKLY", set_challenges_view, "weekly"),
+        ]
+
+    def set_state(self, st: str):
+        self.state = st
+
+    def quit_game(self):
+        self.running = False
+
+    # ---------------- Shop helpers ----------------
+
+    def handle_events(self):
+        run_guard(self._referee)
+        events = pygame.event.get()
+        for e in events:
+            if e.type == pygame.QUIT:
+                self.running = False
+
+            # Losing focus mid-run used to keep the fight going in the background.
+            if e.type == pygame.WINDOWFOCUSLOST and self.state == "playing":
+                self.set_state("paused")
+
+            if e.type == pygame.KEYDOWN:
+                if e.key == pygame.K_m:
+                    self.toggle_setting("audio")
+                    continue
+                if e.key == pygame.K_F11:
+                    self.toggle_fullscreen()
+                    continue
+
+                if self.state in ("controls", "weapons", "shop", "settings", "leaderboard", "challenges", "minigames"):
+                    if e.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
+                        self.set_state("menu")
+
+                if self.state == "playing":
+                    if e.key == pygame.K_ESCAPE:
+                        self.set_state("paused")
+
+                    if e.key == pygame.K_f:
+                        self.player.auto_fire = not self.player.auto_fire
+
+                elif self.state == "paused":
+                    if e.key == pygame.K_ESCAPE:
+                        self.set_state("playing")
+
+                elif self.state == "gameover":
+                    # K_r is handled by the Restart button's hotkey (doing it here as well fired
+                    # start_run() twice on a single key press).
+                    if e.key == pygame.K_ESCAPE:
+                        self.set_state("menu")
+
+                elif self.state == "menu":
+                    if e.key == pygame.K_ESCAPE:
+                        self.running = False
+
+        return events
+
+    # ---------------- Camera ----------------
+
+    def update_camera(self, dt):
+        target = self.player.pos - Vector2(WIDTH / 2, HEIGHT / 2)
+        self.cam = self.cam.lerp(target, 1 - math.exp(-dt * 8.5))
+
+        do_shake = bool(self.save.settings.get("shake", True))
+        self.shake = max(0.0, self.shake - dt * SHAKE_DECAY)
+        if do_shake and self.shake > 0:
+            self.shake_vec = Vector2(random.uniform(-1, 1), random.uniform(-1, 1)) * self.shake
+        else:
+            self.shake_vec = Vector2(0, 0)
+
+        self.cam.x = clamp(self.cam.x, 0, ARENA_W - WIDTH)
+        self.cam.y = clamp(self.cam.y, 0, ARENA_H - HEIGHT)
+
+    # ---------------- Updates (Playing) ----------------
+
+    def update_playing(self, dt, events):
+        # The referee runs before the player is updated, so no injected stat can take
+        # effect this frame even if a menu overlay swallowed the event hook.
+        run_guard(self._referee)
+        # Accumulate with dt, not wall clock: the old code counted paused time too, so a long
+        # pause inflated your run timer and dumped you into the high difficulty bracket.
+        self.survival_time += dt
+        self.challenge_refresh_timer -= dt
+        if self.challenge_refresh_timer <= 0.0:
+            self.challenge_refresh_timer = 5.0
+            self.refresh_challenges()
+        self.update_difficulty()
+        self.update_minigame(dt)
+        if self.state != "playing":
+            return   # a minigame just ended (timer or escape); stop touching the run
+
+        self.boss_grace_timer = max(0.0, self.boss_grace_timer - dt)
+        self.wave_banner_timer = max(0.0, self.wave_banner_timer - dt)
+
+        self.try_spawn_powerup(dt)
+
+        if not self.in_boss_fight:
+            self.wave_timer -= dt
+            if self.wave_timer <= 0:
+                # Pay the twist you just survived before rolling the next one.
+                survived = self.wave_mutator
+                if survived is not None and survived.coin_bonus:
+                    self.run_bonus_coins += survived.coin_bonus
+                    self.add_float_text(self.player.pos + Vector2(0, -54),
+                                        f"+{survived.coin_bonus} COINS (BANKED)", C_COIN, life=1.0)
+
+                self.wave += 1
+                self._ac_wave = True
+                self.wave_timer = self.wave_time
+                self.update_challenges("waves", 1)
+                self.update_challenges("high_wave", self.wave, absolute=True)
+
+                if self.wave == 3 and not self.counted_game:
+                    self.update_mastery(self.player.weapon_id, wins=1)
+                    self.counted_game = True
+
+                if self.wave % BOSS_EVERY_WAVES == 0:
+                    # Boss waves stay clean - the boss is the twist.
+                    self.wave_mutator = None
+                    self.set_wave_banner(f"WAVE {self.wave}")
+                    self.spawn_boss()
+                else:
+                    self.wave_mutator = self.roll_mutator()
+                    banner = f"WAVE {self.wave}"
+                    if self.wave_mutator is not None:
+                        banner += f"  —  {self.wave_mutator.name}"
+                    self.set_wave_banner(banner)
+
+        can_spawn_normals = (not self.in_boss_fight) and (self.boss_grace_timer <= 0.0)
+
+        base = lerp(SPAWN_RATE_BASE, SPAWN_RATE_HARD, self.diff_eased)
+        self.spawn_interval = max(0.42, base - SPAWN_RATE_WAVE_BONUS * max(0, self.wave - 1))
+        if self.wave_mutator is not None and self.wave_mutator.rate_mul != 1.0:
+            self.spawn_interval = max(0.30, self.spawn_interval * self.wave_mutator.rate_mul)
+
+        cap_now = self.current_enemy_cap()
+
+        self.spawn_timer -= dt
+        if self.spawn_timer <= 0:
+            self.spawn_timer = self.spawn_interval
+            if can_spawn_normals and self.active_enemy_count() < cap_now:
+                roll = random.random()
+                if self.wave < 2:
+                    kind = "chaser"
+                elif self.wave < 4:
+                    kind = "chaser" if roll < 0.80 else "sprinter"
+                elif self.wave < 7:
+                    kind = "chaser" if roll < 0.55 else ("ranged" if roll < 0.80 else "sprinter")
+                elif self.wave < 11:
+                    kind = "chaser" if roll < 0.45 else ("ranged" if roll < 0.72 else ("tank" if roll < 0.86 else "sprinter"))
+                else:
+                    kind = "chaser" if roll < 0.38 else ("ranged" if roll < 0.62 else ("dasher" if roll < 0.78 else ("tank" if roll < 0.90 else "sprinter")))
+                self.spawn_enemy(kind)
+
+        keys = pygame.key.get_pressed()
+        mx, my = pygame.mouse.get_pos()
+        mouse_buttons = pygame.mouse.get_pressed(3)
+
+        move = Vector2(0, 0)
+        if keys[pygame.K_w]:
+            move.y -= 1
+        if keys[pygame.K_s]:
+            move.y += 1
+        if keys[pygame.K_a]:
+            move.x -= 1
+        if keys[pygame.K_d]:
+            move.x += 1
+
+        mouse_world = Vector2(mx, my) + self.cam + self.shake_vec
+        self.mouse_world = mouse_world
+        self.player.update(dt, self, move, mouse_world, mouse_buttons, keys)
+        self._update_drones(dt)
+
+        trail = self.get_trail_cosmetic()
+        if trail.id != "trail_none" and self.player.vel.length_squared() > 4.0:
+            self.trail_timer -= dt
+            if self.trail_timer <= 0:
+                jitter = Vector2(random.uniform(-6, 6), random.uniform(-6, 6))
+                self.particles.append(Particle(self.player.pos + jitter, -self.player.vel * 0.1, trail.color, life=0.25, radius=2))
+                self.trail_timer = 0.05 if trail.id == "trail_spark" else 0.04
+
+        pickup_dist = PICKUP_ATTRACT_DIST_BASE + self.player.magnet_bonus
+        for p in self.pickups:
+            d = self.player.pos - p.pos
+            dist = d.length()
+            if dist < pickup_dist and dist > 1e-6:
+                p.vel += d.normalize() * PICKUP_ATTRACT_FORCE * dt
+            p.vel *= (1.0 - min(dt * 6.0, 0.5))
+            p.pos += p.vel * dt
+
+        self.pickups = [p for p in self.pickups if not self._handle_pickup_collect(p)]
+
+        for b in self.projectiles:
+            b.update(dt)
+        for b in self.enemy_projectiles:
+            b.update(dt)
+
+        self._apply_gravity_pull(dt)
+        self._apply_homing(dt)
+        self._drift_mines(dt)
+        self._update_hazards(dt)
+
+        # Soft cull: handle walls/off-arena now, but keep a round that expired this frame in the
+        # list for one last collision pass so it can still connect with its target.
+        self.projectiles = self._cull_projectiles(self.projectiles, keep_expired=True)
+        self.enemy_projectiles = self._cull_projectiles(self.enemy_projectiles, keep_expired=True)
+
+        cell = ENEMY_SEPARATION_CELL
+        buckets: Dict[Tuple[int, int], List[EnemyBase]] = {}
+        for e in self.enemies:
+            key = (int(e.pos.x // cell), int(e.pos.y // cell))
+            buckets.setdefault(key, []).append(e)
+
+        for e in self.enemies:
+            e.hit_flash = max(0.0, e.hit_flash - dt)
+            key = (int(e.pos.x // cell), int(e.pos.y // cell))
+            neighbors: List[EnemyBase] = []
+            for ox in (-1, 0, 1):
+                for oy in (-1, 0, 1):
+                    neighbors.extend(buckets.get((key[0] + ox, key[1] + oy), []))
+            e.apply_separation(dt, neighbors)
+            e.tick_status(dt, self)
+            e.update(dt, self)
+            self.resolve_enemy_player_overlap(e)
+
+        self._handle_bullet_enemy_collisions()
+        self._handle_enemy_bullet_player_collisions()
+        self._handle_ally_contact()
+        self._handle_enemy_contact_player()
+
+        # Final cull: now drop everything killed or expired (ground-fire patches spawn here).
+        self.projectiles = self._cull_projectiles(self.projectiles)
+        self.enemy_projectiles = self._cull_projectiles(self.enemy_projectiles)
+
+        alive = []
+        for e in self.enemies:
+            if e.alive():
+                alive.append(e)
+            else:
+                if isinstance(e, Boss):
+                    self.on_boss_killed(e)
+                else:
+                    self.player.score += e.score_value
+                    self.player._ac_score = True
+                    self.run_stats["kills"] += 1
+                    if e.last_hit_by_player and e.last_hit_weapon_id:
+                        self.update_mastery(e.last_hit_weapon_id, kills=1)
+                        self.update_challenges("kills", 1)
+                        self.update_challenges("weapon_kills", 1, weapon_id=e.last_hit_weapon_id)
+                    if e.elite and random.random() < ELITE_POWERUP_CHANCE:
+                        self.spawn_powerup_at(Vector2(e.pos))
+                    self.drop_pickups(Vector2(e.pos))
+        self.enemies = alive
+
+        for pt in self.particles:
+            pt.update(dt)
+        self.particles = [pt for pt in self.particles if pt.life > 0]
+        if len(self.particles) > MAX_PARTICLES:
+            del self.particles[:len(self.particles) - MAX_PARTICLES]
+
+        for ft in self.float_texts:
+            ft.update(dt)
+        self.float_texts = [ft for ft in self.float_texts if ft.life > 0]
+        if len(self.float_texts) > MAX_FLOAT_TEXTS:
+            del self.float_texts[:len(self.float_texts) - MAX_FLOAT_TEXTS]
+
+        if self.progress_dirty:
+            self.progress_dirty_timer += dt
+            if self.progress_dirty_timer >= 2.0:
+                self.save.save()
+                self.progress_dirty = False
+                self.progress_dirty_timer = 0.0
+
+        # The referee runs last, once every position change for the frame is settled.
+        run_tick(self._referee, dt)
+
+        # Death takes priority; otherwise bank any levels gained and show a card per level.
+        if self.player.hp <= 0:
+            self.player.hp = 0
+            if self.minigame is not None:
+                self.finish_minigame(cleared=False)   # dying in a minigame pays partial, not game over
+            else:
+                self.set_state("gameover")
+        else:
+            gained = self.player.try_level_up()
+            if gained > 0:
+                self.audio_play("levelup")
+                self.pending_levelups += gained
+                self.open_levelup()
+
+    # ---------------- Level up screen ----------------
+
+    def run(self):
+        while self.running:
+            dt = self.clock.tick(FPS_CAP) / 1000.0
+            dt = clamp(dt, 0.0, 1 / 30)
+
+            events = self.handle_events()
+
+            if self.state == "playing":
+                self.update_playing(dt, events)
+                self.update_camera(dt)
+                self.draw_background()
+                self.draw_obstacles()
+                self.draw_entities()
+                self.draw_minigame_view()
+                self.draw_hud()
+                self.draw_boss_tracker()
+
+            elif self.state == "menu":
+                self.draw_menu(events)
+
+            elif self.state == "weapons":
+                self.draw_weapons(events)
+
+            elif self.state == "shop":
+                self.draw_shop(events)
+
+            elif self.state == "settings":
+                self.draw_settings(events)
+
+            elif self.state == "controls":
+                self.draw_controls(events)
+
+            elif self.state == "leaderboard":
+                self.draw_leaderboard(events)
+
+            elif self.state == "challenges":
+                self.draw_challenges(events)
+
+            elif self.state == "minigames":
+                self.draw_minigames(events)
+
+            elif self.state == "paused":
+                self.update_camera(dt)
+                self.draw_paused(events)
+
+            elif self.state == "levelup":
+                self.update_camera(dt)
+                self.draw_levelup(events)
+
+            elif self.state == "gameover":
+                self.update_camera(dt)
+                self.draw_gameover(events)
+
+            pygame.display.flip()
+
+        pygame.quit()
+        sys.exit()
