@@ -10,6 +10,7 @@ from tankgame.config import *
 from tankgame.util import *
 from tankgame.data.minigames import METEOR_RADIUS
 from tankgame.ui.text import circle_outline
+from tankgame.art.glow import add_glow, tinted_disc
 
 
 class Meteor:
@@ -76,9 +77,13 @@ class Meteor:
         inner_c = (200, 245, 255) if self.friendly else (255, 220, 150)
         core = (140, 210, 255) if self.friendly else (255, 170, 90)
         hot = (240, 255, 255) if self.friendly else (255, 235, 190)
+        r = int(self.radius)
         if not self.landed:
             frac = 1.0 - clamp(self.timer / max(0.01, self.telegraph), 0.0, 1.0)
-            r = int(self.radius)
+            # Danger zone: a translucent fill that strengthens as impact nears, a shrinking
+            # countdown ring and four rotating ticks.
+            disc = tinted_disc(ring, r, int(26 + 46 * frac))
+            surf.blit(disc, (p[0] - r - 1, p[1] - r - 1))
             pygame.draw.circle(surf, ring, p, r, 2)
             circle_outline(surf, inner_c, p, max(3, int(r * (1.0 - frac))), 2)
             for q in range(4):
@@ -87,8 +92,10 @@ class Meteor:
                 outer = inner * 1.22
                 pygame.draw.line(surf, ring,
                                  (p[0] + inner.x, p[1] + inner.y), (p[0] + outer.x, p[1] + outer.y), 2)
+            add_glow(surf, p, ring, max(6, int(r * 0.35)), 0.25 + 0.5 * frac)
         else:
             t = clamp(self.impact_timer / 0.35, 0.0, 1.0)
-            r = int(self.radius * (0.7 + 0.5 * (1.0 - t)))
-            pygame.draw.circle(surf, core, p, r)
-            pygame.draw.circle(surf, hot, p, max(2, int(r * 0.6)))
+            rr = int(r * (0.7 + 0.5 * (1.0 - t)))
+            add_glow(surf, p, core, int(rr * 1.4), 0.4 + 0.6 * t)
+            pygame.draw.circle(surf, core, p, max(2, int(rr * 0.75)))
+            pygame.draw.circle(surf, hot, p, max(2, int(rr * 0.45)))

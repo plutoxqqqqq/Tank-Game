@@ -5,4 +5,4 @@ responsibility, with ``main.py`` kept as a thin bootstrap that also re-exports t
 names so existing tooling (and the smoke-test harness) can keep importing ``main``.
 """
 
-__version__ = "5.0.0"
+__version__ = "6.0.0"

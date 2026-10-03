@@ -27,7 +27,7 @@ main.py                  (bootstrap + compatibility re-exports)
 | `data/` | All dataclass tables: weapons, traits, upgrades, shop, maps, mutators, minigames, mastery. |
 | `entities/` | `Projectile`, `Pickup`, `Particle`/`FloatingText`, the enemy family + `Boss`, `Drone`, `Meteor`, `Player`. |
 | `art/` | `draw_tank` (hull, treads, per-weapon barrel). |
-| `ui/` | `text.py`, `widgets.py`, and `screens/` (one module per menu screen). |
+| `ui/` | `glass.py` (the liquid-glass toolkit: frosted panels, bars, badges, icons, cached text), `text.py`, `widgets.py`, and `screens/` (one module per menu screen). |
 | `game/` | The `Game` class mixins: `app`, `display`, `meta`, `world`, `combat`, `progression`, `minigames`, `run`, `render`, plus the base-game `anticheat`. |
 
 `game/__init__.py` assembles the class:
@@ -72,10 +72,27 @@ python inject.py  # terminal 2
 
 `inject.py` finds the game process, calls `install()` inside it, and paints the menu onto the
 existing frame (RightShift / F1 toggles it). Because nothing is written to the source, restarting
-`main.py` always gives you the legit game again until you inject. Requires `psutil` and `pywin32`.
+`main.py` always gives you the legit game again until you inject. Windows, 64-bit Python only, and
+`inject.py` must run on the same Python version as the game. Requires `psutil` and `pywin32`.
+Pass `--pid N` to target a specific process.
 
-The base game ships with a small, cheat-agnostic anti-cheat (`game/anticheat.py`). It inspects live
-game state against the engine's own rules — rule-method integrity, stat baselines, bounds, speed,
-dash/fire, damage accounting, vitals, world and progression provenance — and reverts anything the
-engine could not have produced, no matter how the cheat is delivered. It only prevents; it never
-kills the player.
+While the menu is open it owns the keyboard and mouse, so clicks and ESC never fall through to the
+game underneath. The **Uninject** action removes every hook, restores the player's real stats,
+deletes `.inject_cfg` and the cached bytecode, and hands control back to the anti-cheat.
+
+The base game ships with a cheat-agnostic, behavioural anti-cheat (`game/anticheat.py`). It
+inspects live game state against the engine's own rules and reverts anything the engine could not
+have produced, no matter how the cheat is delivered: rule-method and referee integrity, NaN/infinity
+sanity, stat baselines, exact grants (every heal, XP gain, kill, wave clear and save change declares
+exactly what it changed), kill provenance (enemy HP lost must match recorded damage before a kill
+pays out), bounds, speed, dash/fire rate, pre-flight round speed, damage accounting, world state and
+the save. It only prevents; it never kills the player. See the module docstring for the full list.
+
+Because pending save changes are judged before the referee re-baselines, coins or unlocks added
+while it was stood down are reverted when it comes back (for example on Uninject).
+
+While injected, `inject.py` stands that referee down from the outside without editing
+`anticheat.py`: it swaps the `run_guard`/`run_tick` entry points that `game/app.py` calls for quiet
+stand-ins, makes the referee's shot/dash gates allow everything, and lifts its zero-knockback damage
+hook. Uninject restores all three and re-baselines the referee, so the rest of the session is
+policed again.

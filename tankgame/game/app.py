@@ -39,7 +39,8 @@ from tankgame.entities.drone import Drone
 from tankgame.entities.meteor import Meteor
 from tankgame.art.tank_art import draw_tank
 from tankgame.ui.widgets import Button, TabButton
-from tankgame.game.anticheat import AntiCheat, run_guard, run_tick
+from tankgame.game.anticheat import (AntiCheat, run_guard, run_tick, run_preflight,
+                                      run_prereap, run_audit)
 
 
 
@@ -51,7 +52,6 @@ class AppMixin:
         pygame.display.set_caption(TITLE)
         # SCALED keeps the whole game at a fixed 1100x650 logical size while the window is stretched
         # to the monitor, so fullscreen needs no layout maths anywhere else in the codebase.
-        self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
         self.clock = pygame.time.Clock()
 
         # Fonts
@@ -105,6 +105,7 @@ class AppMixin:
         self.player.outline_color = self.get_outline_color()
         self.anticheat = AntiCheat(self)
         self._referee = self.anticheat
+        self._run_audit = run_audit
         self.projectiles: List[Projectile] = []
         self.enemy_projectiles: List[Projectile] = []
         self.enemies: List[EnemyBase] = []
@@ -267,7 +268,7 @@ class AppMixin:
 
         # Two-column grid below Start Run: everything is reachable without overlapping the footer.
         self.menu_buttons = [
-            Button(pygame.Rect(left_x, top, full_w, full_h), "Start Run", self.start_run, hotkey=pygame.K_RETURN),
+            Button(pygame.Rect(left_x, top, full_w, full_h), "Start Run", self.start_run, hotkey=pygame.K_RETURN, kind="primary"),
             Button(pygame.Rect(left_x, row2, half_w, half_h), "Weapons", self.open_weapons_screen, small=True),
             Button(pygame.Rect(right_x, row2, half_w, half_h), "Shop", self.open_shop, small=True),
             Button(pygame.Rect(left_x, row3, half_w, half_h), "Minigames", self.open_minigames, small=True),
@@ -278,8 +279,9 @@ class AppMixin:
         ]
         self.menu_quit_btn = Button(
             pygame.Rect(20, 18, 54, 48),
-            "X",
-            self.quit_game
+            "×",
+            self.quit_game,
+            kind="danger",
         )
 
         self.weapon_back_btn = Button(pygame.Rect(40, HEIGHT - 80, 220, 52), "Back", lambda: self.set_state("menu"))
@@ -298,21 +300,21 @@ class AppMixin:
         pb_w, pb_h = 336, 54
         pb_x = cx - pb_w // 2
         self.pause_buttons = [
-            Button(pygame.Rect(pb_x, 250, pb_w, pb_h), "Resume", lambda: self.set_state("playing")),
+            Button(pygame.Rect(pb_x, 250, pb_w, pb_h), "Resume", lambda: self.set_state("playing"), kind="primary"),
             Button(pygame.Rect(pb_x, 316, pb_w, pb_h), "Restart", self.restart_run),
-            Button(pygame.Rect(pb_x, 382, pb_w, pb_h), "Quit to Menu", self.abandon_run),
+            Button(pygame.Rect(pb_x, 382, pb_w, pb_h), "Quit to Menu", self.abandon_run, kind="danger"),
         ]
 
         self.gameover_buttons = [
-            Button(pygame.Rect(pb_x, 430, pb_w, pb_h), "Restart (R)", self.start_run, hotkey=pygame.K_r),
+            Button(pygame.Rect(pb_x, 430, pb_w, pb_h), "Restart (R)", self.start_run, hotkey=pygame.K_r, kind="primary"),
             Button(pygame.Rect(pb_x, 496, pb_w, pb_h), "Menu", lambda: self.set_state("menu")),
         ]
 
         # Shop tabs
         tab_y = 120
-        tab_w = 138
-        tab_h = 44
         tab_gap = 10
+        tab_w = min(138, (WIDTH - 40 - tab_gap * 4) // 5)
+        tab_h = 44
         start_x = (WIDTH - (tab_w * 5 + tab_gap * 4)) // 2
 
         def set_tab(tid: str):
@@ -334,9 +336,9 @@ class AppMixin:
 
         # Cosmetics tabs
         ctab_y = 170
-        ctab_w = 160
-        ctab_h = 36
         ctab_gap = 12
+        ctab_w = min(160, (WIDTH - 40 - ctab_gap * 3) // 4)
+        ctab_h = 36
         ctab_start_x = (WIDTH - (ctab_w * 4 + ctab_gap * 3)) // 2
 
         def set_cosmetic_category(category: str):
@@ -402,7 +404,9 @@ class AppMixin:
                 if e.key == pygame.K_m:
                     self.toggle_setting("audio")
                     continue
-                if e.key == pygame.K_F11:
+                # F11 or Alt+Enter: switch between desktop fullscreen and a resizable window.
+                if e.key == pygame.K_F11 or (e.key in (pygame.K_RETURN, pygame.K_KP_ENTER)
+                                             and (e.mod & pygame.KMOD_ALT)):
                     self.toggle_fullscreen()
                     continue
 
@@ -483,7 +487,7 @@ class AppMixin:
                                         f"+{survived.coin_bonus} COINS (BANKED)", C_COIN, life=1.0)
 
                 self.wave += 1
-                self._ac_wave = True
+                self._ac_wave_steps = getattr(self, "_ac_wave_steps", 0) + 1
                 self.wave_timer = self.wave_time
                 self.update_challenges("waves", 1)
                 self.update_challenges("high_wave", self.wave, absolute=True)
@@ -512,6 +516,9 @@ class AppMixin:
             self.spawn_interval = max(0.30, self.spawn_interval * self.wave_mutator.rate_mul)
 
         cap_now = self.current_enemy_cap()
+        if self.minigame is not None and self.minigame.id == "blitz":
+            self.spawn_interval = min(self.spawn_interval, BLITZ_SPAWN_INTERVAL)
+            cap_now = max(cap_now, ENEMY_CAP_HARD)
 
         self.spawn_timer -= dt
         if self.spawn_timer <= 0:
@@ -567,7 +574,11 @@ class AppMixin:
             p.pos += p.vel * dt
 
         self.pickups = [p for p in self.pickups if not self._handle_pickup_collect(p)]
+        self._compact_xp_orbs()
 
+        # Rounds are speed-checked before they move: a swept round faster than any build can fire
+        # would otherwise hit everything on a map-long line before the end-of-frame check.
+        run_preflight(self._referee)
         for b in self.projectiles:
             b.update(dt)
         for b in self.enemy_projectiles:
@@ -610,6 +621,9 @@ class AppMixin:
         self.projectiles = self._cull_projectiles(self.projectiles)
         self.enemy_projectiles = self._cull_projectiles(self.enemy_projectiles)
 
+        # Kill provenance: no enemy may die (and pay out score/XP/drops) unless recorded damage
+        # accounts for the HP it lost.
+        run_prereap(self._referee)
         alive = []
         for e in self.enemies:
             if e.alive():
@@ -618,8 +632,7 @@ class AppMixin:
                 if isinstance(e, Boss):
                     self.on_boss_killed(e)
                 else:
-                    self.player.score += e.score_value
-                    self.player._ac_score = True
+                    self.player._grant_score(e.score_value)
                     self.run_stats["kills"] += 1
                     if e.last_hit_by_player and e.last_hit_weapon_id:
                         self.update_mastery(e.last_hit_weapon_id, kills=1)
@@ -674,6 +687,9 @@ class AppMixin:
             dt = clamp(dt, 0.0, 1 / 30)
 
             events = self.handle_events()
+            # Authoritative referee pass, reached by a private reference so a client that swaps the
+            # run_guard/run_tick entry points does not silence it.
+            self._run_audit(self._referee, dt, self.state == "playing")
 
             if self.state == "playing":
                 self.update_playing(dt, events)
@@ -682,8 +698,8 @@ class AppMixin:
                 self.draw_obstacles()
                 self.draw_entities()
                 self.draw_minigame_view()
-                self.draw_hud()
                 self.draw_boss_tracker()
+                self.draw_hud()
 
             elif self.state == "menu":
                 self.draw_menu(events)

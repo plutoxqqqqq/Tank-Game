@@ -1,112 +1,80 @@
-"""The minigame list screen."""
+"""Minigame list screen (liquid-glass style)."""
 from __future__ import annotations
 
-import math
-import random
-import sys
-import time
-import traceback
-from typing import Dict, List, Optional, Tuple
-
 import pygame
-from pygame.math import Vector2
 
 from tankgame.config import *
 from tankgame.util import *
-from tankgame.ui.text import *
-from tankgame.audio import *
-from tankgame.data.weapons import WEAPONS
-from tankgame.data.traits import TRAITS, trait_of, TraitDef
-from tankgame.data.upgrades import UPGRADES, UPGRADES_BY_ID, UpgradeDef
-from tankgame.data.shop import (SHOP_ITEMS, SHOP_ITEMS_BY_ID, SHOP_ITEMS_BY_WEAPON,
-                                SHOP_ITEMS_BY_MAP, ShopItemDef, COSMETICS, COSMETICS_BY_ID,
-                                DEFAULT_COSMETICS, BUNDLES, CosmeticDef, BundleDef,
-                                BUNDLE_ONLY_COSMETIC_VALUE)
-from tankgame.data.maps import MAPS, MAPS_BY_ID, MapDef, map_of
-from tankgame.data.mutators import MUTATORS, MUTATORS_BY_ID, MutatorDef
-from tankgame.data.minigames import (MINIGAMES, MINIGAMES_BY_ID, MinigameDef,
-                                      METEOR_TELEGRAPH_START, METEOR_TELEGRAPH_END,
-                                      METEOR_RADIUS, METEOR_MAX_ACTIVE)
-from tankgame.data.mastery import MAX_MASTERY_LEVEL, mastery_requirements
-from tankgame.entities.player import Player
-from tankgame.entities.enemies import (EnemyBase, Chaser, Ranged, Tank, Sprinter, Dasher,
-                                        Pink, Boss)
-from tankgame.entities.projectile import Projectile
-from tankgame.entities.pickup import Pickup
-from tankgame.entities.fx import Particle, FloatingText
-from tankgame.entities.drone import Drone
-from tankgame.entities.meteor import Meteor
-from tankgame.art.tank_art import draw_tank
-from tankgame.ui.widgets import Button, TabButton
+from tankgame.ui import glass
+from tankgame.ui.widgets import cached_button
 
+
+def _mouse_state(events):
+    return pygame.mouse.get_pos(), any(
+        e.type == pygame.MOUSEBUTTONDOWN and e.button == 1 for e in events)
 
 
 class MinigameScreenMixin:
 
     def draw_minigames(self, events):
-        self.screen.fill(C_BG)
+        glass.background(self.screen)
         cx = WIDTH // 2
-        draw_text(self.screen, self.font_big, "MINIGAMES", (cx, 52), C_TEXT, center=True)
-        draw_text(self.screen, self.font_ui, "Short challenges - the further you get, the more coins",
-                  (cx, 86), C_TEXT_DIM, center=True, shadow=False)
-        draw_text_right(self.screen, self.font_ui, f"Coins: {self.save.coins}", (WIDTH - 44, 28), C_COIN, shadow=False)
+        glass.text(self.screen, "MINIGAMES", 58, (cx, 40), glass.GL_TEXT, align="center", bold=True, glow=True)
+        glass.text(self.screen, "Short challenges — the further you get, the more coins", 20,
+                   (cx, 80), glass.GL_TEXT_DIM, align="center")
+        glass.text(self.screen, f"{self.save.coins:,} coins", 22, (WIDTH - 44, 30),
+                   glass.GL_COIN, align="midright", bold=True)
 
-        mouse_pos = pygame.mouse.get_pos()
-        mouse_down = any(e.type == pygame.MOUSEBUTTONDOWN and e.button == 1 for e in events)
-
+        mouse_pos, mouse_down = _mouse_state(events)
         for rect, mg in self.mg_play_buttons:
             hover = rect.collidepoint(mouse_pos)
             clears = int(self.save.minigame_clears.get(mg.id, 0))
             best = float(self.save.minigame_best.get(mg.id, 0.0))
-            bg = (*C_PANEL_2, 250) if hover else (*C_PANEL, 240)
-            pygame.draw.rect(self.screen, bg, rect, border_radius=12)
-            pygame.draw.rect(self.screen, mg.accent if hover else C_WALL_EDGE, rect, 1, border_radius=12)
-            pygame.draw.rect(self.screen, mg.accent, pygame.Rect(rect.x, rect.y + 7, 4, rect.h - 14),
-                             border_radius=2)
+            glass.panel(self.screen, rect, radius=14, alpha=44 if hover else 30,
+                        accent=mg.accent if hover else None, shadow=hover)
+            bar = pygame.Surface((5, rect.h - 16), pygame.SRCALPHA)
+            bar.fill((*mg.accent, 230))
+            self.screen.blit(bar, (rect.x + 10, rect.y + 8))
 
-            compact = rect.h < 48
-            name_font = self.font_shop_small if compact else self.font_shop_item
-            desc_font = self.font_tiny if compact else self.font_shop_small
-            draw_text(self.screen, name_font, mg.name, (rect.x + 20, rect.y + (3 if compact else 7)),
-                      C_TEXT, shadow=False)
-            draw_text(self.screen, desc_font, mg.desc, (rect.x + 20, rect.y + (21 if compact else 30)),
-                      C_TEXT_DIM, shadow=False)
+            compact = rect.h < 50
+            glass.text(self.screen, mg.name, 24 if not compact else 20,
+                       (rect.x + 26, rect.y + (4 if compact else 8)), glass.GL_TEXT, bold=True)
+            glass.text(self.screen, glass.clip_text(mg.desc, 18, rect.w - 420), 18,
+                       (rect.x + 26, rect.y + (24 if compact else 32)), glass.GL_TEXT_DIM)
 
-            pips_x = rect.right - 316
+            pips_x = rect.right - 330
             for i in range(5):
-                col = mg.accent if i < mg.difficulty else (58, 64, 80)
-                pygame.draw.circle(self.screen, col, (pips_x + i * 13, rect.y + 18), 4)
-            draw_text(self.screen, self.font_tiny, f"DIFFICULTY {mg.difficulty}/5",
-                      (pips_x - 4, rect.y + 28), C_TEXT_DIM, shadow=False)
+                col = mg.accent if i < mg.difficulty else (70, 78, 96)
+                pygame.draw.circle(self.screen, col, (pips_x + i * 14, rect.centery - 6), 4)
+            glass.text(self.screen, f"DIFF {mg.difficulty}/5", 16,
+                       (pips_x - 4, rect.centery + 2), glass.GL_TEXT_FAINT)
 
-            reward_txt = f"+{mg.reward} coins" if clears == 0 else f"+{mg.reward}  x{clears} cleared"
-            draw_text_right(self.screen, self.font_shop_small, reward_txt, (rect.right - 118, rect.y + 10),
-                            C_COIN, shadow=False)
+            reward_txt = f"+{mg.reward}" + (f"  ·  x{clears}" if clears else "")
+            glass.text(self.screen, reward_txt, 18, (rect.right - 128, rect.y + 10),
+                       glass.GL_COIN, align="right", bold=True)
             if best > 0.0:
-                draw_text_right(self.screen, self.font_tiny, f"best {int(best * 100)}%",
-                                (rect.right - 118, rect.y + 30), C_TEXT_DIM, shadow=False)
+                glass.text(self.screen, f"best {int(best * 100)}%", 16,
+                           (rect.right - 128, rect.bottom - 24), glass.GL_TEXT_FAINT, align="right")
 
-            btn_rect = pygame.Rect(rect.right - 100, rect.y + 8, 86, rect.h - 16)
-            btn = Button(btn_rect, "Play", lambda mid=mg.id: self.start_minigame(mid))
-            btn.update(1 / 60, mouse_pos, mouse_down, events)
-            btn.draw(self.screen, self.font_shop_small)
+            btn = pygame.Rect(rect.right - 104, rect.centery - (rect.h - 16) // 2, 88, rect.h - 16)
+            b = cached_button(("minigame", mg.id), btn, "Play", lambda mid=mg.id: self.start_minigame(mid), kind="primary")
+            b.update(1 / 60, mouse_pos, mouse_down, events)
+            b.draw(self.screen, self.font_shop_small)
 
         if self.minigame_result is not None:
             res = self.minigame_result
-            band = getattr(self, "mg_result_rect", None) or pygame.Rect(cx - 330, 108, 660, 46)
+            band = getattr(self, "mg_result_rect", None) or pygame.Rect(cx - 330, 104, 660, 48)
             ok = bool(res["cleared"])
-            col = C_OK if ok else C_WARN
-            self.draw_panel(band, (*C_PANEL, 250), (*col, 230), radius=12)
-            draw_text(self.screen, self.font_shop_small,
-                      f"{'CLEARED' if ok else 'FAILED'}  -  {res['name']}", (band.x + 16, band.y + 3),
-                      col, shadow=False)
-            draw_text(self.screen, self.font_tiny,
-                      f"+{res['coins']} coins   ({int(float(res['progress']) * 100)}% of the objective)",
-                      (band.x + 16, band.y + 24), C_COIN, shadow=False)
+            col = glass.GL_GOOD if ok else glass.GL_WARN
+            glass.panel(self.screen, band, radius=14, alpha=40, accent=col, shadow=True)
+            glass.text(self.screen, f"{'CLEARED' if ok else 'FINISHED'}  —  {res['name']}", 20,
+                       (band.x + 18, band.centery), col, align="midleft", bold=True)
+            glass.text(self.screen, f"+{res['coins']} coins  ·  {int(float(res['progress']) * 100)}% of the objective   ×",
+                       17, (band.right - 18, band.centery), glass.GL_COIN, align="midright")
             if band.collidepoint(mouse_pos) and mouse_down:
-                self.minigame_result = None   # click to dismiss
+                self.minigame_result = None
 
         self.mg_back_btn.update(1 / 60, mouse_pos, mouse_down, events)
         self.mg_back_btn.draw(self.screen, self.font_med)
-        draw_text(self.screen, self.font_small, "ESC or Back returns to the menu",
-                  (cx, HEIGHT - 24), C_TEXT_DIM, center=True, shadow=False)
+        glass.text(self.screen, "ESC or Back returns to the menu", 18, (cx, HEIGHT - 24),
+                   glass.GL_TEXT_FAINT, align="center")

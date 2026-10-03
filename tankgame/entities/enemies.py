@@ -14,6 +14,17 @@ from tankgame.entities.projectile import Projectile
 from tankgame.ui.text import circle_outline
 
 
+def shade_body(surf, p, radius: int, col):
+    """A solid unit with a ground shadow, a darker rim and a soft specular highlight."""
+    pygame.draw.circle(surf, (6, 8, 12), (p[0] + 3, p[1] + 4), radius)
+    rim = (max(0, col[0] - 70), max(0, col[1] - 70), max(0, col[2] - 70))
+    pygame.draw.circle(surf, rim, p, radius)
+    pygame.draw.circle(surf, col, p, max(1, radius - 2))
+    hl = (min(255, col[0] + 70), min(255, col[1] + 70), min(255, col[2] + 70))
+    pygame.draw.circle(surf, hl, (p[0] - radius // 3, p[1] - radius // 3), max(2, radius // 3))
+    pygame.draw.circle(surf, (12, 14, 20), p, radius + 1, 1)
+
+
 class EnemyBase:
     def __init__(self, pos: Vector2, hp: float, speed: float, radius: int, color):
         self.pos = Vector2(pos)
@@ -37,6 +48,10 @@ class EnemyBase:
         # Hypnosis: while charmed the enemy is a temporary ally and ignores the player.
         self.charm_timer = 0.0
         self.charm_hit_cd = 0.0
+        # Every point of HP this enemy loses is recorded here by the engine's own damage paths
+        # (take_damage, burn, scorched ground). The referee checks hp == hp_max - recorded damage,
+        # so an HP that drops without a recorded hit (a poke) is restored before it can pay out.
+        self._ac_dmg = 0.0
 
     def speed_mult(self) -> float:
         return (1.0 - self.slow_frac) if self.slow_timer > 0.0 else 1.0
@@ -69,6 +84,7 @@ class EnemyBase:
         if self.burn_timer > 0.0:
             self.burn_timer = max(0.0, self.burn_timer - dt)
             self.hp -= self.burn_dps * dt
+            self._ac_dmg += self.burn_dps * dt
             game.credit_burn_damage(self.burn_dps * dt)
         if self.charm_timer > 0.0:
             self.charm_timer = max(0.0, self.charm_timer - dt)
@@ -92,6 +108,7 @@ class EnemyBase:
 
     def take_damage(self, dmg: int, knock_dir: Vector2, knockback: float, weapon_id: Optional[str] = None, from_player: bool = False):
         self.hp -= dmg
+        self._ac_dmg += dmg
         self.vel += knock_dir * (knockback / max(1.0, self.radius))
         self.hit_flash = 0.12
         if from_player:
@@ -104,8 +121,7 @@ class EnemyBase:
     def draw(self, surf, cam):
         p = (int(self.pos.x - cam.x), int(self.pos.y - cam.y))
         col = (255, 255, 255) if self.hit_flash > 0 else self.color
-        pygame.draw.circle(surf, col, p, self.radius)
-        circle_outline(surf, (14, 16, 22), p, self.radius + 2, 1)
+        shade_body(surf, p, self.radius, col)
 
         if self.elite:
             circle_outline(surf, (255, 215, 120), p, self.radius + 6, 2)
@@ -126,8 +142,9 @@ class EnemyBase:
             x = p[0] - w // 2
             y = p[1] - self.radius - 12
             frac = clamp(self.hp / max(1.0, self.hp_max), 0, 1)
-            pygame.draw.rect(surf, (10, 10, 12), pygame.Rect(x, y, w, h))
-            pygame.draw.rect(surf, (90, 255, 210), pygame.Rect(x, y, int(w * frac), h))
+            pygame.draw.rect(surf, (10, 12, 16), pygame.Rect(x - 1, y - 1, w + 2, h + 2), border_radius=3)
+            if frac > 0:
+                pygame.draw.rect(surf, (90, 255, 210), pygame.Rect(x, y, max(2, int(w * frac)), h), border_radius=2)
 
 
 class Chaser(EnemyBase):
@@ -186,7 +203,6 @@ class Ranged(EnemyBase):
 
     def update(self, dt, game):
         self.shoot_cd -= dt
-        player = game.player
         # Brainwashed shooters keep shooting - just at their former allies.
         tgt = game.enemy_target(self)
         if tgt is None:
@@ -351,6 +367,11 @@ class Boss(EnemyBase):
         self.bullet_life = 1.5
         self.enraged = False
 
+    def apply_charm(self, duration: float):
+        # Immune: a brainwashed boss can never be killed, so the boss fight (and the run) would
+        # never end - wave progression and normal spawns both wait on it.
+        return
+
     def take_damage(self, dmg: int, knock_dir: Vector2, knockback: float, weapon_id: Optional[str] = None, from_player: bool = False):
         # Boss has knockback resistance
         super().take_damage(dmg, knock_dir, knockback * 0.35, weapon_id=weapon_id, from_player=from_player)
@@ -424,7 +445,7 @@ class Boss(EnemyBase):
     def draw(self, surf, cam):
         p = (int(self.pos.x - cam.x), int(self.pos.y - cam.y))
         col = (255, 255, 255) if self.hit_flash > 0 else self.color
-        pygame.draw.circle(surf, col, p, self.radius)
+        shade_body(surf, p, self.radius, col)
         edge = C_BOSS_EDGE if not self.enraged else (255, 235, 150)
         circle_outline(surf, edge, p, self.radius + 5, 3)
         circle_outline(surf, (25, 25, 35), p, self.radius + 10, 2)
@@ -437,5 +458,6 @@ class Boss(EnemyBase):
         x = p[0] - w // 2
         y = p[1] - self.radius - 16
         frac = clamp(self.hp / max(1.0, self.hp_max), 0, 1)
-        pygame.draw.rect(surf, (10, 10, 12), pygame.Rect(x, y, w, h))
-        pygame.draw.rect(surf, (255, 120, 140), pygame.Rect(x, y, int(w * frac), h))
+        pygame.draw.rect(surf, (10, 12, 16), pygame.Rect(x - 1, y - 1, w + 2, h + 2), border_radius=4)
+        if frac > 0:
+            pygame.draw.rect(surf, (255, 120, 140), pygame.Rect(x, y, max(2, int(w * frac)), h), border_radius=3)

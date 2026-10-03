@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import os
 import random
 import sys
 import time
@@ -49,27 +50,39 @@ class DisplayMixin:
     def apply_display_mode(self):
         """(Re)create the window to match the fullscreen preference.
 
-        Fullscreen is a borderless window at the monitor's native size - the way a maximised game
-        takes the whole screen - with pygame.SCALED stretching the fixed logical frame onto it.
-        The logical size tracks the monitor's aspect ratio (tankgame.viewport), so nothing is
-        letterboxed or stretched out of shape. pygame.SCALED also converts mouse input back to
-        logical coordinates, so no other code has to know the window is fullscreen.
+        Fullscreen is true *desktop* fullscreen: FULLSCREEN together with SCALED makes SDL cover
+        the entire monitor (taskbar included) at its native resolution without a video-mode
+        switch, so alt-tabbing stays instant and nothing behind the game shows through. The
+        fixed logical frame is stretched onto it; the logical size already matches the
+        monitor's aspect ratio (tankgame.viewport), so nothing is letterboxed or squashed.
+
+        Windowed mode is resizable and can be maximised; SCALED keeps the picture in proportion.
+        SCALED also maps mouse input back to logical coordinates, so no other code has to know
+        how big the real window is.
         """
         if self.save.settings.get("fullscreen", False):
-            desk = desktop_size()
-            if desk is not None:
-                try:
-                    self.screen = pygame.display.set_mode(desk, pygame.NOFRAME | pygame.SCALED)
-                    return
-                except pygame.error:
-                    pass
             try:
                 self.screen = pygame.display.set_mode((WIDTH, HEIGHT),
                                                       pygame.FULLSCREEN | pygame.SCALED)
                 return
             except pygame.error:
                 pass
-        self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
+            # Fallback: a borderless window pinned to the top-left corner at the desktop size.
+            desk = desktop_size()
+            if desk is not None:
+                os.environ["SDL_VIDEO_WINDOW_POS"] = "0,0"
+                try:
+                    self.screen = pygame.display.set_mode(desk, pygame.NOFRAME | pygame.SCALED)
+                    return
+                except pygame.error:
+                    pass
+                finally:
+                    os.environ.pop("SDL_VIDEO_WINDOW_POS", None)
+        os.environ["SDL_VIDEO_CENTERED"] = "1"
+        try:
+            self.screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE | pygame.SCALED)
+        except pygame.error:
+            self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
 
     def toggle_fullscreen(self):
         self.save.settings["fullscreen"] = not bool(self.save.settings.get("fullscreen", False))

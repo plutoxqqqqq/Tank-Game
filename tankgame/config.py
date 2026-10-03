@@ -22,7 +22,7 @@ from pygame.math import Vector2
 
 
 WIDTH, HEIGHT = 1100, 650
-TITLE = "Tank Game v1.5"
+TITLE = "Tank Game — Survival"
 FPS_CAP = 144
 
 RECOIL_MULT = 1.0 # Default = 1       (Recoil multiplier)
@@ -116,6 +116,8 @@ DASH_COOLDOWN_BASE = 1.15
 
 WAVE_TIME_BASE = 15 # Originally 18, now 15    (Wave time)
 RAPID_WAVE_TIME = 3.0   # "Rapid" minigame: waves last three seconds
+BLITZ_SPAWN_INTERVAL = 0.34   # "Blitz" minigame: spawn cadence (seconds between spawns)
+XP_ORB_SOFT_CAP = 220   # beyond this many orbs on the floor, distant ones merge (XP is kept)
 
 # Difficulty ramping: reduced by ~30% (slower) by increasing the ramp time
 DIFFICULTY_RAMP_TIME = 400.0 # 400s to reach "hard" instead of 180s

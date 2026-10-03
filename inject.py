@@ -15,6 +15,12 @@ the existing pygame frame. RightShift (or F1) toggles it from any screen.
 Because nothing is written to the game's source, closing and reopening ``main.py``
 always gives you the untouched, legit game again until you inject once more.
 
+The game ships its own anti-cheat referee. While the menu is installed the referee is
+stood down from the outside (its entry points in ``tankgame.game.app`` are swapped for quiet
+stand-ins and its shot/dash gates wave everything through); ``anticheat.py`` itself is never
+edited. Uninject puts every piece back and re-baselines the referee, so the rest of the
+session is policed again.
+
 The injector uses ``CreateRemoteThread`` + ``WriteProcessMemory`` to queue a call in the
 game's interpreter (via ``Py_AddPendingCall``). That is real process injection, so some
 antivirus products may flag it - allow ``python.exe`` if the injection is blocked.
@@ -22,10 +28,12 @@ antivirus products may flag it - allow ``python.exe`` if the injection is blocke
 from __future__ import annotations
 
 import ctypes
+import glob
 import json
 import math
 import os
 import random
+import re
 import struct
 import sys
 import time
@@ -76,6 +84,17 @@ SPAWN_OPTIONS = [
 
 META_KEYS = ["meta_damage", "meta_move", "meta_hp", "meta_xp", "meta_dash",
              "meta_armor", "meta_bulletspeed"]
+
+CHEAT_FLAGS = ("always_crit", "instant_kill", "aimbot", "bullet_life_inf", "spin_instant",
+               "meteor_shot", "ground_fire", "chain_double", "pull_instant", "split_recursive",
+               "drone_free_roam", "twin_shot", "charm_forever", "bounce_enemies",
+               "infinite_bounces", "mine_homing", "retribution", "pierce_splash", "pellet_uncap")
+CHEAT_SCALARS = ("recoil_mult", "dash_time_bonus", "pellet_mul", "drones_add")
+
+_INPUT_EVENTS = frozenset((
+    pygame.KEYDOWN, pygame.KEYUP, pygame.TEXTINPUT, pygame.TEXTEDITING,
+    pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION, pygame.MOUSEWHEEL,
+))
 
 
 class _FalseKeys:
@@ -265,7 +284,7 @@ class InjectMenu:
                 try:
                     m["value"] = _clamp(float(value), m["min"], m["max"])
                 except (TypeError, ValueError):
-                    pass
+                    continue
             elif m["kind"] == "toggle":
                 m["value"] = bool(value)
             elif m["kind"] == "dropdown":
@@ -416,6 +435,8 @@ class InjectMenu:
             self.dragging = None
             self._dragging_panel = False
 
+        if _MENU is not self:
+            return
         self._apply(self.game, dt)
 
     # -------------------------------------------------------------- input
@@ -605,7 +626,7 @@ class InjectMenu:
                         color=C_EBULLET, radius=BULLET_RADIUS_ENEMY,
                         lifetime=RANGED_BULLET_LIFETIME))
         except Exception:
-            pass
+            traceback.print_exc()
 
     # -------------------------------------------------------------- apply
     def _apply(self, g, dt):
@@ -1010,6 +1031,7 @@ class InjectMenu:
 
 _INSTALLED = False
 _ORIG = {}
+_QUIET_REFEREES = []
 
 
 def _ensure_menu(game):
@@ -1034,6 +1056,48 @@ def _frame_dt(game):
     return _clamp(now - last, 0.0, 0.05)
 
 
+def _restore_bases(player):
+    """Put every overlaid stat back to its legit value and forget the snapshot."""
+    for attr in CHEAT_FLAGS + CHEAT_SCALARS:
+        base_attr = "_tinj_base_" + attr
+        if not hasattr(player, base_attr):
+            continue
+        try:
+            setattr(player, attr, getattr(player, base_attr))
+        except Exception:
+            pass
+        try:
+            delattr(player, base_attr)
+        except Exception:
+            pass
+
+
+def _allow(_player):
+    return True
+
+
+def _referee_off(ac):
+    """Leave the referee object in place but make its shot/dash gates wave everything through."""
+    if ac is None or getattr(ac, "_tinj_quiet", False):
+        return
+    ac.allow_shot = _allow
+    ac.allow_dash = _allow
+    ac._tinj_quiet = True
+    _QUIET_REFEREES.append(ac)
+
+
+def _referee_on(ac):
+    """Undo ``_referee_off`` and re-baseline so the cheat's leftovers are not flagged."""
+    for name in ("allow_shot", "allow_dash", "_tinj_quiet"):
+        ac.__dict__.pop(name, None)
+    try:
+        if getattr(ac.game, "anticheat", None) is not ac:
+            ac.game.anticheat = ac
+        ac.reset()
+    except Exception:
+        traceback.print_exc()
+
+
 def install():
     """Hook the running game so the cheat menu is driven from its own loop.
 
@@ -1043,8 +1107,11 @@ def install():
     if _INSTALLED:
         return
     try:
+        import tankgame.game.app as app_mod
+        import tankgame.game.anticheat as ac_mod
         from tankgame.game import Game
         from tankgame.entities.player import Player
+        from tankgame.entities.enemies import EnemyBase
     except Exception:
         traceback.print_exc()
         return
@@ -1056,8 +1123,12 @@ def install():
         "contact": Game._handle_enemy_contact_player,
         "player_update": Player.update,
         "move_speed": Player.get_move_speed,
+        "apply_effects": Player.apply_effects,
         "event_get": pygame.event.get,
         "flip": pygame.display.flip,
+        "run_guard": app_mod.run_guard,
+        "run_tick": app_mod.run_tick,
+        "take_damage": EnemyBase.take_damage,
     }
 
     def handle_events(g):
@@ -1065,10 +1136,13 @@ def install():
         if menu is None:
             return orig["handle_events"](g)
         events = orig["event_get"]()
+        was_open = menu.visible
         menu.handle_frame(_frame_dt(g), events)
-        if menu.visible:
-            return events   # the menu owns input while it is open
-        real_get = orig["event_get"]
+        if was_open or menu.visible:
+            # The menu owns the keyboard and mouse while it is open (and on the frame that
+            # closes it, so the ESC that hides it never also pauses or quits the game).
+            events = [e for e in events if e.type not in _INPUT_EVENTS]
+        real_get = pygame.event.get
         pygame.event.get = lambda *a, **k: events
         try:
             return orig["handle_events"](g)
@@ -1120,6 +1194,12 @@ def install():
         base = orig["move_speed"](p)
         return base * (_MENU.value("speed") if _MENU is not None else 1.0)
 
+    def apply_effects(p, *a, **k):
+        # A real upgrade must land on the legit stats, not on the cheat overlay, or turning a
+        # module off later would wipe the card. The overlay is re-applied next frame.
+        _restore_bases(p)
+        return orig["apply_effects"](p, *a, **k)
+
     def flip(*a, **k):
         menu = _MENU
         if menu is not None:
@@ -1129,57 +1209,62 @@ def install():
                 traceback.print_exc()
         return orig["flip"](*a, **k)
 
+    def quiet_guard(ac):
+        _referee_off(ac)
+
+    def quiet_tick(ac, dt):
+        _referee_off(ac)
+
     Game.handle_events = handle_events
     Game.update_playing = update_playing
     Game.damage_player = damage_player
     Game._handle_enemy_contact_player = handle_contact
     Player.update = player_update
     Player.get_move_speed = move_speed
+    Player.apply_effects = apply_effects
     pygame.display.flip = flip
+    app_mod.run_guard = quiet_guard
+    app_mod.run_tick = quiet_tick
+    if ac_mod._ORIG_TAKE_DAMAGE is not None:
+        EnemyBase.take_damage = ac_mod._ORIG_TAKE_DAMAGE
 
     _ORIG.clear()
     _ORIG.update(orig)
     _ORIG["Game"] = Game
     _ORIG["Player"] = Player
+    _ORIG["EnemyBase"] = EnemyBase
+    _ORIG["app_mod"] = app_mod
     _INSTALLED = True
     print("[inject] cheat installed - press RightShift (or F1) in-game")
 
 
 def uninstall():
-    """Restore every hooked method and player field, and scrub the cheat's files."""
+    """Restore every hooked method, player field and the referee, and scrub the cheat's files."""
     global _MENU, _INSTALLED
-    Game = _ORIG.get("Game")
-    Player = _ORIG.get("Player")
-    if Game is not None:
-        Game.handle_events = _ORIG["handle_events"]
-        Game.update_playing = _ORIG["update_playing"]
-        Game.damage_player = _ORIG["damage_player"]
-        Game._handle_enemy_contact_player = _ORIG["contact"]
-    if Player is not None:
-        Player.update = _ORIG["player_update"]
-        Player.get_move_speed = _ORIG["move_speed"]
-    pygame.event.get = _ORIG.get("event_get", pygame.event.get)
-    pygame.display.flip = _ORIG.get("flip", pygame.display.flip)
+    if not _INSTALLED:
+        return
+    Game = _ORIG["Game"]
+    Player = _ORIG["Player"]
+    Game.handle_events = _ORIG["handle_events"]
+    Game.update_playing = _ORIG["update_playing"]
+    Game.damage_player = _ORIG["damage_player"]
+    Game._handle_enemy_contact_player = _ORIG["contact"]
+    Player.update = _ORIG["player_update"]
+    Player.get_move_speed = _ORIG["move_speed"]
+    Player.apply_effects = _ORIG["apply_effects"]
+    _ORIG["EnemyBase"].take_damage = _ORIG["take_damage"]
+    _ORIG["app_mod"].run_guard = _ORIG["run_guard"]
+    _ORIG["app_mod"].run_tick = _ORIG["run_tick"]
+    pygame.event.get = _ORIG["event_get"]
+    pygame.display.flip = _ORIG["flip"]
 
     game = getattr(_MENU, "game", None)
-    player = getattr(game, "player", None) if game is not None else None
+    player = getattr(game, "player", None)
     if player is not None:
-        for attr in ("always_crit", "instant_kill", "aimbot", "bullet_life_inf",
-                     "spin_instant", "meteor_shot", "ground_fire", "chain_double",
-                     "pull_instant", "split_recursive", "drone_free_roam", "twin_shot",
-                     "charm_forever", "bounce_enemies", "infinite_bounces", "mine_homing",
-                     "retribution", "pierce_splash", "pellet_uncap", "recoil_mult",
-                     "dash_time_bonus", "pellet_mul", "drones_add"):
-            base_attr = "_tinj_base_" + attr
-            if hasattr(player, base_attr):
-                try:
-                    setattr(player, attr, getattr(player, base_attr))
-                except Exception:
-                    pass
-                try:
-                    delattr(player, base_attr)
-                except Exception:
-                    pass
+        _restore_bases(player)
+
+    while _QUIET_REFEREES:
+        _referee_on(_QUIET_REFEREES.pop())
 
     if game is not None:
         try:
@@ -1190,19 +1275,19 @@ def uninstall():
 
     _MENU = None
     _INSTALLED = False
+    _ORIG.clear()
 
     try:
         if os.path.exists(_CFG_PATH):
             os.remove(_CFG_PATH)
     except OSError:
         pass
-    try:
-        import glob as _glob
-        cache_dir = os.path.join(os.path.dirname(_CFG_PATH), "__pycache__")
-        for path in _glob.glob(os.path.join(cache_dir, "inject.*.pyc")):
+    cache_dir = os.path.join(os.path.dirname(_CFG_PATH), "__pycache__")
+    for path in glob.glob(os.path.join(cache_dir, "inject.*.pyc")):
+        try:
             os.remove(path)
-    except OSError:
-        pass
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -1274,15 +1359,22 @@ def _inject_code(pid, code):
         raise OSError(f"OpenProcess failed ({ctypes.get_last_error()}). Try running as admin.")
     try:
         remote_base = None
+        remote_pythons = []
         for module in win32process.EnumProcessModules(hproc):
             try:
                 path = win32process.GetModuleFileNameEx(hproc, module)
             except Exception:
                 continue
-            if os.path.basename(path).lower() == dll_name:
+            name = os.path.basename(path).lower()
+            if name == dll_name:
                 remote_base = int(module)
                 break
+            if re.fullmatch(r"python3\d+\.dll", name):
+                remote_pythons.append(name)
         if remote_base is None:
+            if remote_pythons:
+                raise OSError(f"the game runs on {remote_pythons[0]} but inject.py runs on "
+                              f"{dll_name}; start inject.py with the same Python as the game")
             raise OSError(f"{dll_name} is not loaded in PID {pid}; is that the game?")
 
         local_base = int(k32.GetModuleHandleW(dll_name))
@@ -1365,7 +1457,8 @@ def _main(argv=None):
     root = os.path.dirname(os.path.abspath(__file__))
     bootstrap = (
         "import sys\n"
-        f"sys.path.insert(0, {root!r})\n"
+        f"if {root!r} not in sys.path:\n"
+        f"    sys.path.insert(0, {root!r})\n"
         "import inject as _tinj\n"
         "_tinj.install()\n"
     )

@@ -11,6 +11,31 @@ from pygame.math import Vector2
 from tankgame.config import *
 from tankgame.util import *
 from tankgame.ui.text import draw_text
+from tankgame.ui.text import get_font
+from tankgame.art.glow import add_glow
+
+
+_TEXT_CACHE = {}
+
+
+def _outlined_text(text: str, color) -> pygame.Surface:
+    """Bold label with a dark outline so damage numbers stay readable over a busy fight."""
+    key = (text, tuple(color[:3]))
+    img = _TEXT_CACHE.get(key)
+    if img is None:
+        font = get_font(20)
+        font.set_bold(True)
+        fg = font.render(text, True, color[:3])
+        edge = font.render(text, True, (8, 10, 14))
+        font.set_bold(False)
+        img = pygame.Surface((fg.get_width() + 2, fg.get_height() + 2), pygame.SRCALPHA)
+        for ox, oy in ((0, 1), (2, 1), (1, 0), (1, 2), (0, 0), (2, 2), (0, 2), (2, 0)):
+            img.blit(edge, (ox, oy))
+        img.blit(fg, (1, 1))
+        if len(_TEXT_CACHE) > 400:
+            _TEXT_CACHE.clear()
+        _TEXT_CACHE[key] = img
+    return img
 
 
 class Particle:
@@ -31,14 +56,14 @@ class Particle:
         if self.life <= 0:
             return
         t = clamp(self.life / self.life_max, 0, 1)
-        # Fade toward the background: pygame.draw ignores the alpha byte on an opaque display
-        # surface, so the old "(*color, a)" never actually faded.
+        p = (int(self.pos.x - cam.x), int(self.pos.y - cam.y))
+        rr = max(1, int(self.radius * (0.6 + 0.7 * t)))
+        # A glowing spark that dims as it dies (additive, so it never darkens what is under it).
+        add_glow(surf, p, self.color, rr * 3 + 1, 0.25 + 0.6 * t)
         cr, cg, cb = self.color
         br, bg, bb = C_BG
         col = (int(br + (cr - br) * t), int(bg + (cg - bg) * t), int(bb + (cb - bb) * t))
-        rr = max(1, int(self.radius * (0.7 + 0.6 * t)))
-        pygame.draw.circle(surf, col, (int(self.pos.x - cam.x), int(self.pos.y - cam.y)), rr)
-
+        pygame.draw.circle(surf, col, p, rr)
 
 class FloatingText:
     def __init__(self, pos: Vector2, text: str, color=C_WARN, life=0.65):
@@ -54,11 +79,10 @@ class FloatingText:
         self.pos += self.vel * dt
         self.vel.y -= 55 * dt
 
-    def draw(self, surf, cam, font):
+    def draw(self, surf, cam, font=None):
         if self.life <= 0:
             return
         t = clamp(self.life / self.life_max, 0, 1)
-        a = int(255 * t)
-        img = font.render(self.text, True, self.color)
-        img.set_alpha(a)
-        surf.blit(img, (self.pos.x - cam.x, self.pos.y - cam.y))
+        img = _outlined_text(self.text, self.color)
+        img.set_alpha(int(255 * min(1.0, t * 1.6)))
+        surf.blit(img, (int(self.pos.x - cam.x) - img.get_width() // 2, int(self.pos.y - cam.y)))

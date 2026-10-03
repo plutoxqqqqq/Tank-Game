@@ -34,6 +34,10 @@ def draw_tank(surf, pos: Vector2, aim: Vector2, body_col, trim_col, outline_col,
     tread = (36, 42, 55)
     muzzle = (150, 160, 178)
 
+    # Soft ground shadow so the tank sits on the arena instead of floating over it.
+    shadow_pts = _rot_rect(pos + Vector2(3, 5), f, 38.0, 36.0)
+    pygame.draw.polygon(surf, (6, 8, 12), shadow_pts)
+
     # Treads either side of the hull.
     for side in (1, -1):
         pts = _rot_rect(pos + right * (12.5 * side), f, 36.0, 9.0)
@@ -43,6 +47,9 @@ def draw_tank(surf, pos: Vector2, aim: Vector2, body_col, trim_col, outline_col,
     # Hull.
     hull = _rot_rect(pos, f, 29.0, 25.0)
     pygame.draw.polygon(surf, body_col, hull)
+    # Lit upper deck: a lighter inner plate gives the hull some depth.
+    deck = _rot_rect(pos - f * 1.5, f, 19.0, 15.0)
+    pygame.draw.polygon(surf, tuple(min(255, c + 34) for c in body_col[:3]), deck)
     pygame.draw.polygon(surf, edge, hull, 2)
 
     # Turret ring in the player's cosmetic outline colour.
