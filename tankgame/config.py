@@ -22,7 +22,7 @@ from pygame.math import Vector2
 
 
 WIDTH, HEIGHT = 1100, 650
-TITLE = "Tank Game v1.5"
+TITLE = "Tank Game — Survival"
 FPS_CAP = 144
 
 RECOIL_MULT = 1.0 # Default = 1       (Recoil multiplier)

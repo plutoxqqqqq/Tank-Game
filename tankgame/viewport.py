@@ -7,6 +7,7 @@ once, before the rest of the package imports ``config``, so every module sees th
 """
 from __future__ import annotations
 
+import sys
 from typing import Optional, Tuple
 
 import pygame
@@ -17,8 +18,33 @@ DEFAULT_W, DEFAULT_H = 1100, 650
 MIN_W, MAX_W = 700, 2560
 
 
+_DPI_DONE = False
+
+
+def enable_dpi_awareness():
+    """On Windows, opt out of display-scaling virtualisation.
+
+    Without this, a monitor at 125%/150% scaling reports a smaller "desktop" than it really is
+    and the game is drawn into that smaller, blurry, bitmap-stretched area. Must run before the
+    display is initialised. A no-op everywhere else.
+    """
+    global _DPI_DONE
+    if _DPI_DONE or sys.platform != "win32":
+        return
+    _DPI_DONE = True
+    try:
+        import ctypes
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)   # per-monitor aware
+        except Exception:
+            ctypes.windll.user32.SetProcessDPIAware()        # older Windows: system aware
+    except Exception:
+        pass
+
+
 def desktop_size() -> Optional[Tuple[int, int]]:
     """Best-effort (width, height) of the primary monitor, or None if unavailable."""
+    enable_dpi_awareness()
     try:
         if not pygame.display.get_init():
             pygame.display.init()

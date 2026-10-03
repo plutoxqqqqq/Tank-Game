@@ -49,7 +49,8 @@ class Button:
             clicked = True
         self._down = self.hover and (mouse_down or self._down and pygame.mouse.get_pressed(3)[0])
         for e in events:
-            if e.type == pygame.KEYDOWN and self.hotkey and e.key == self.hotkey:
+            if (e.type == pygame.KEYDOWN and self.hotkey and e.key == self.hotkey
+                    and not (getattr(e, "mod", 0) & pygame.KMOD_ALT)):   # Alt+Enter = fullscreen
                 clicked = True
         if clicked and self.enabled:
             self.callback()

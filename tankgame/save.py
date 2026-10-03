@@ -32,7 +32,7 @@ class SaveManager:
         self.daily_challenges: Dict[str, object] = {}
         self.weekly_challenges: Dict[str, object] = {}
         self.weapon_mastery: Dict[str, Dict[str, int]] = {}
-        self.settings: Dict[str, bool] = {"audio": True, "shake": True, "damage_numbers": True, "fullscreen": False}
+        self.settings: Dict[str, bool] = {"audio": True, "shake": True, "damage_numbers": True, "fullscreen": True}
         self.leaderboard: List[Dict[str, int]] = []
         self.load()
 
@@ -60,7 +60,7 @@ class SaveManager:
         self.daily_challenges = {}
         self.weekly_challenges = {}
         self.weapon_mastery = {}
-        self.settings = {"audio": True, "shake": True, "damage_numbers": True, "fullscreen": False}
+        self.settings = {"audio": True, "shake": True, "damage_numbers": True, "fullscreen": True}
         self.leaderboard = []
 
     def ensure_weapons(self, weapon_ids: List[str]) -> bool:
@@ -222,7 +222,7 @@ class SaveManager:
             if "damage_numbers" not in self.settings:
                 self.settings["damage_numbers"] = True
             if "fullscreen" not in self.settings:
-                self.settings["fullscreen"] = False
+                self.settings["fullscreen"] = True
 
             if "pistol" not in self.weapon_unlocks:
                 self.weapon_unlocks["pistol"] = True

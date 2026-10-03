@@ -5,6 +5,24 @@ All notable changes to Tank Game Rebirth, newest first.
 > Tank Game — a top-down survival shooter in Pygame. Asset-free (all visuals are shapes) and
 > audio-optional, with a fallback-safe sound layer.
 
+## Fullscreen, modern effects, and a referee that can't be stood down
+
+- **True fullscreen.** Fullscreen now covers the whole monitor (taskbar included) at native
+  resolution — not a window with the desktop showing through — via FULLSCREEN+SCALED, and new
+  saves default to it. Windowed mode is resizable and maximisable. F11 or Alt+Enter toggles.
+  On Windows the process is marked DPI-aware so a scaled display isn't drawn blurry into a
+  smaller area.
+- **Modern in-world art.** New cached additive-glow sprites (`art/glow.py`): bullets are tapered
+  tracers with bloom, the railgun is a layered laser, pickups and drones glow, meteor danger
+  zones fill in as impact nears, the shield/dash read as lit auras, and damage numbers get a
+  dark outline so they stay legible over a busy fight.
+- **The referee can no longer be stood down by swapping its entry points.** A cheat (or the
+  bundled injector) that replaced `run_guard`/`run_tick` previously silenced every check. The
+  main loop now also drives an authoritative audit reached by a private reference, which heals
+  tampered engine methods and instance-level gate overrides before running the full checks — so
+  injected modules (god mode, aura, stat flags, …) are detected and reverted in-game. `inject.py`
+  is unchanged.
+
 ## Liquid-glass UI, logic fixes, anti-cheat expansion
 
 - **New UI.** `tankgame/ui/glass.py` is a small liquid-glass toolkit (frosted panels with a

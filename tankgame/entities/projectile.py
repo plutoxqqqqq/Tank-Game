@@ -10,6 +10,7 @@ from pygame.math import Vector2
 from tankgame.config import *
 from tankgame.util import *
 from tankgame.ui.text import circle_outline
+from tankgame.art.glow import add_glow
 
 
 class Projectile:
@@ -99,32 +100,40 @@ class Projectile:
         return segment_hits_circle(self.prev_pos, self.pos, center, radius + self.radius)
 
     def draw(self, surf, cam):
-        a = (int(self.prev_pos.x - cam.x), int(self.prev_pos.y - cam.y))
         b = (int(self.pos.x - cam.x), int(self.pos.y - cam.y))
+        r = max(1, int(self.radius))
         if self.mine:
             blink = (int(self.life * 6) % 2) == 0
-            pygame.draw.circle(surf, self.color, b, self.radius)
-            circle_outline(surf, (255, 120, 90) if blink else (120, 90, 60), b, self.radius + 3, 2)
+            add_glow(surf, b, (255, 120, 90) if blink else (130, 70, 40), r * 3 + 4, 0.8 if blink else 0.35)
+            pygame.draw.circle(surf, (26, 22, 22), b, r + 2)
+            pygame.draw.circle(surf, self.color, b, r)
+            pygame.draw.circle(surf, (255, 236, 200) if blink else (150, 118, 86), b, max(1, r // 2))
             return
+        sp = self.vel.length()
+        d = self.vel / sp if sp > 1e-6 else Vector2(1, 0)
         if self.beam > 0.0:
-            # Railgun: a long red laser instead of a dot, so you can read the line it cut.
-            sp = self.vel.length()
-            back = Vector2(self.vel)
-            if sp > 1e-6:
-                back = back / sp
-            else:
-                back = Vector2(1, 0)
-            tail = self.pos - back * self.beam
+            # Railgun: a layered laser (dark halo, hot body, white core) with a glowing head.
+            tail = self.pos - d * self.beam
             t0 = (int(tail.x - cam.x), int(tail.y - cam.y))
-            pygame.draw.line(surf, (255, 60, 60), t0, b, 5)
-            pygame.draw.line(surf, (255, 190, 190), t0, b, 2)
-            pygame.draw.circle(surf, (255, 120, 120), b, self.radius + 2)
+            pygame.draw.line(surf, (96, 18, 22), t0, b, 9)
+            pygame.draw.line(surf, (255, 70, 70), t0, b, 5)
+            pygame.draw.line(surf, (255, 222, 222), t0, b, 2)
+            add_glow(surf, b, (255, 90, 90), 16, 0.9)
             return
-        # short tracer so fast rounds still read on screen
-        if a != b:
-            pygame.draw.line(surf, self.color, a, b, max(1, self.radius))
-        pygame.draw.circle(surf, self.color, b, self.radius)
-        circle_outline(surf, self.color, b, self.radius + 3, 1)
+        # A tapered tracer: dim tail, bright body, hot core, soft additive bloom.
+        trail = min(30.0, 6.0 + sp * 0.02)
+        tail = self.pos - d * trail
+        mid = self.pos - d * (trail * 0.45)
+        t0 = (int(tail.x - cam.x), int(tail.y - cam.y))
+        m0 = (int(mid.x - cam.x), int(mid.y - cam.y))
+        col = self.color
+        dim = (col[0] * 2 // 5, col[1] * 2 // 5, col[2] * 2 // 5)
+        hot = (min(255, col[0] + 90), min(255, col[1] + 90), min(255, col[2] + 90))
+        add_glow(surf, b, col, r * 3 + 3, 0.7)
+        pygame.draw.line(surf, dim, t0, m0, max(1, r - 1))
+        pygame.draw.line(surf, col, m0, b, max(2, r))
+        pygame.draw.circle(surf, col, b, r)
+        pygame.draw.circle(surf, hot, b, max(1, r // 2))
 
     def settle(self):
         """Mines stop dead where they land."""

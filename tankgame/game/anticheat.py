@@ -117,6 +117,15 @@ _EFFECT_CAPS = (
     ("drone_range", POWERUP_DURATION_DRONE_RANGE),
 )
 
+# Methods a client might shadow on the referee *instance* to neuter a gate (for example setting
+# ac.allow_shot = lambda p: True). The audit strips any such instance override so the class method
+# — which the self-heal keeps canonical — is what actually runs.
+_GATE_METHODS = ("guard", "tick", "pre_flight", "pre_reap", "allow_shot", "allow_dash",
+                 "_check_methods", "_check_attrs", "_check_hp", "_check_sanity", "_check_bounds",
+                 "_check_progress", "_check_save", "_check_enemies", "_check_projectiles",
+                 "_check_speed", "_check_dash", "_check_walls", "_check_obstacles", "_check_aura",
+                 "_check_time", "_raise")
+
 # Active anticheat for the damage hook (one game per process in normal play).
 _ACTIVE = None
 _ORIG_TAKE_DAMAGE = None
@@ -876,6 +885,36 @@ def _heal_and_report(ac):
     if getattr(ac.game, "anticheat", None) is not ac:
         ac.game.anticheat = ac
         _CANON_RAISE(ac, "Referee detached")
+
+
+def _strip_overrides(ac):
+    """Remove any instance-level shadow of a gate method so the canonical class method runs."""
+    d = getattr(ac, "__dict__", None)
+    if not d:
+        return
+    for name in _GATE_METHODS:
+        if name in d:
+            try:
+                del d[name]
+                _CANON_RAISE(ac, "Referee gate replaced: " + name)
+            except Exception:
+                pass
+
+
+def run_audit(ac, dt, playing):
+    """Authoritative per-frame pass, driven directly from the main loop.
+
+    The engine's own ``run_guard`` / ``run_tick`` entry points can be swapped out by a client to
+    silence the referee; this pass is reached by a different name and re-runs the full checks, so
+    the referee keeps policing even when those entry points have been detached. It heals every
+    tampered method and instance override first, so a cheat that hooked the engine's combat/stat
+    methods or neutered a gate is undone here.
+    """
+    _heal_and_report(ac)
+    _strip_overrides(ac)
+    _CANON_GUARD(ac)
+    if playing:
+        _CANON_TICK(ac, dt)
 
 
 def run_guard(ac):

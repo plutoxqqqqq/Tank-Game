@@ -39,7 +39,8 @@ from tankgame.entities.drone import Drone
 from tankgame.entities.meteor import Meteor
 from tankgame.art.tank_art import draw_tank
 from tankgame.ui.widgets import Button, TabButton
-from tankgame.game.anticheat import AntiCheat, run_guard, run_tick, run_preflight, run_prereap
+from tankgame.game.anticheat import (AntiCheat, run_guard, run_tick, run_preflight,
+                                      run_prereap, run_audit)
 
 
 
@@ -51,7 +52,6 @@ class AppMixin:
         pygame.display.set_caption(TITLE)
         # SCALED keeps the whole game at a fixed 1100x650 logical size while the window is stretched
         # to the monitor, so fullscreen needs no layout maths anywhere else in the codebase.
-        self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
         self.clock = pygame.time.Clock()
 
         # Fonts
@@ -105,6 +105,7 @@ class AppMixin:
         self.player.outline_color = self.get_outline_color()
         self.anticheat = AntiCheat(self)
         self._referee = self.anticheat
+        self._run_audit = run_audit
         self.projectiles: List[Projectile] = []
         self.enemy_projectiles: List[Projectile] = []
         self.enemies: List[EnemyBase] = []
@@ -403,7 +404,9 @@ class AppMixin:
                 if e.key == pygame.K_m:
                     self.toggle_setting("audio")
                     continue
-                if e.key == pygame.K_F11:
+                # F11 or Alt+Enter: switch between desktop fullscreen and a resizable window.
+                if e.key == pygame.K_F11 or (e.key in (pygame.K_RETURN, pygame.K_KP_ENTER)
+                                             and (e.mod & pygame.KMOD_ALT)):
                     self.toggle_fullscreen()
                     continue
 
@@ -684,6 +687,9 @@ class AppMixin:
             dt = clamp(dt, 0.0, 1 / 30)
 
             events = self.handle_events()
+            # Authoritative referee pass, reached by a private reference so a client that swaps the
+            # run_guard/run_tick entry points does not silence it.
+            self._run_audit(self._referee, dt, self.state == "playing")
 
             if self.state == "playing":
                 self.update_playing(dt, events)

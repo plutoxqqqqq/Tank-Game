@@ -14,6 +14,7 @@ from tankgame.data.weapons import WEAPONS
 from tankgame.data.traits import TRAITS, trait_of, TraitDef
 from tankgame.data.upgrades import UPGRADES, UPGRADES_BY_ID, UpgradeDef
 from tankgame.ui.text import circle_outline
+from tankgame.art.glow import add_glow
 
 
 class Player:
@@ -644,10 +645,14 @@ class Player:
         flashing = self.invulnerable() and (int(time.time() * 24) % 2 == 0)
         body = (44, 52, 66) if flashing else C_PLAYER
         p = Vector2(self.pos.x - cam.x, self.pos.y - cam.y)
-        draw_tank(surf, p, self.aim_dir, body, self.outline_color, self.outline_color, self.weapon_id)
-
-        if self.effects["shield"] > 0:
-            circle_outline(surf, (150, 200, 255), (int(p.x), int(p.y)), PLAYER_RADIUS + 13, 2)
-
+        ip = (int(p.x), int(p.y))
+        shield = self.effects["shield"] > 0
+        if shield:
+            add_glow(surf, ip, (110, 160, 255), PLAYER_RADIUS + 22, 0.35)
         if self.is_dashing():
-            circle_outline(surf, C_ACCENT_2, (int(p.x), int(p.y)), PLAYER_RADIUS + 11, 2)
+            add_glow(surf, ip, C_ACCENT_2, PLAYER_RADIUS + 18, 0.35)
+        draw_tank(surf, p, self.aim_dir, body, self.outline_color, self.outline_color, self.weapon_id)
+        if shield:
+            circle_outline(surf, (170, 210, 255), ip, PLAYER_RADIUS + 13, 2)
+        if self.is_dashing():
+            circle_outline(surf, C_ACCENT_2, ip, PLAYER_RADIUS + 11, 2)

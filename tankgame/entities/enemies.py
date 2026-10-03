@@ -203,7 +203,6 @@ class Ranged(EnemyBase):
 
     def update(self, dt, game):
         self.shoot_cd -= dt
-        player = game.player
         # Brainwashed shooters keep shooting - just at their former allies.
         tgt = game.enemy_target(self)
         if tgt is None:

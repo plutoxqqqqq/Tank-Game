@@ -9,6 +9,7 @@ from pygame.math import Vector2
 from tankgame.config import *
 from tankgame.entities.projectile import Projectile
 from tankgame.ui.text import circle_outline
+from tankgame.art.glow import add_glow
 
 
 class Drone:
@@ -100,5 +101,7 @@ class Drone:
 
     def draw(self, surf, cam):
         p = (int(self.pos.x - cam.x), int(self.pos.y - cam.y))
-        pygame.draw.circle(surf, (150, 255, 215), p, 6)
-        circle_outline(surf, (24, 60, 55), p, 8, 2)
+        add_glow(surf, p, (120, 255, 205), 16, 0.6)
+        pygame.draw.circle(surf, (16, 40, 36), p, 7)
+        pygame.draw.circle(surf, (150, 255, 215), p, 5)
+        pygame.draw.circle(surf, (235, 255, 248), (p[0] - 1, p[1] - 1), 2)

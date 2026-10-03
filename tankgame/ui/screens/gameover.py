@@ -14,7 +14,8 @@ class GameOverScreenMixin:
         self.award_coins_if_needed()
         self.record_leaderboard_if_needed()
         for e in events:
-            if e.type == pygame.KEYDOWN and e.key in (pygame.K_r, pygame.K_RETURN, pygame.K_KP_ENTER):
+            if (e.type == pygame.KEYDOWN and e.key in (pygame.K_r, pygame.K_RETURN, pygame.K_KP_ENTER)
+                    and not (getattr(e, "mod", 0) & pygame.KMOD_ALT)):
                 self.restart_run()
                 return
         self.draw_background()
