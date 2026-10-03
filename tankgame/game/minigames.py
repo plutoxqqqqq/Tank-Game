@@ -132,8 +132,7 @@ class MinigameMixin:
         elif mg.id == "nightmare":
             # Every spawn is a maxed wave-50 boss, and they ramp up in number over time. Held at
             # wave 50 so scaling never drifts, with the normal spawner kept frozen.
-            self.wave = 50
-            self._ac_wave = True
+            self.wave = 50   # locked at start_minigame (referee re-baselined there)
             self.wave_timer = 1.0e9
             self.spawn_timer = 1.0e9
             target = 1 + int(self.minigame_time // 15.0)
@@ -176,7 +175,7 @@ class MinigameMixin:
         if cleared:
             coins = int(round(coins * 1.15))
         coins = max(1, coins)
-        self.anticheat.note_save()
+        self.anticheat.note_save(coins=coins)
         self.save.coins += coins
         if cleared:
             self.save.minigame_clears[mg.id] = self.save.minigame_clears.get(mg.id, 0) + 1

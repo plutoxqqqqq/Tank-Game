@@ -443,6 +443,7 @@ class CombatMixin:
                 if (e.pos - h["pos"]).length_squared() <= r2:
                     tick = h["dps"] * dt
                     e.hp -= tick
+                    e._ac_dmg += tick
                     e.last_hit_by_player = True
                     e.last_hit_weapon_id = self.player.weapon_id
                     self.credit_burn_damage(tick)

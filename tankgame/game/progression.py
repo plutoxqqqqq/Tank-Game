@@ -167,8 +167,7 @@ class ProgressionMixin:
 
     def on_boss_killed(self, boss: Boss):
         center = Vector2(boss.pos)
-        self.player.score += boss.score_value
-        self.player._ac_score = True
+        self.player._grant_score(boss.score_value)
         self.run_stats["bosses"] += 1
         self.update_challenges("boss_kills", 1)
         self.update_challenges("kills", 1)
@@ -288,7 +287,7 @@ class ProgressionMixin:
                 self.player.gain_xp(p.value)
                 self.audio_play("powerup", 0.05)
             elif p.kind == "health":
-                self.player._ac_hp = True
+                self.player._grant_heal(min(p.value, self.player.max_hp - self.player.hp))
                 self.player.hp = min(self.player.max_hp, self.player.hp + p.value)
             else:
                 self.player.apply_powerup(p.power_type)

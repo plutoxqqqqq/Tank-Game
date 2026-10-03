@@ -162,9 +162,25 @@ class Player:
             self.effects["drone_range"] = max(self.effects["drone_range"],
                                               POWERUP_DURATION_DRONE_RANGE)
 
+    def _grant_score(self, amount: int):
+        """Bank score through the engine's one funnel; the referee accepts exactly this much."""
+        amount = int(amount)
+        if amount > 0:
+            self._ac_score_grant = getattr(self, "_ac_score_grant", 0) + amount
+            self.score += amount
+
+    def _grant_heal(self, amount: float):
+        """Tell the referee the engine is about to heal by ``amount`` (it budgets exactly that)."""
+        if amount > 0:
+            self._ac_heal_amount = getattr(self, "_ac_heal_amount", 0.0) + float(amount)
+            self._ac_hp = True
+
     def gain_xp(self, amount: int):
-        self.xp += int(round(amount * self.meta_xp_mul))
-        self._ac_xp = True
+        gained = int(round(amount * self.meta_xp_mul))
+        self.xp += gained
+        # The referee budgets exactly this much XP; level-ups are then verified against the
+        # engine's own threshold curve, so XP can neither appear nor be mis-spent.
+        self._ac_xp_grant = getattr(self, "_ac_xp_grant", 0) + gained
 
     def try_level_up(self) -> int:
         """Returns how many levels were gained (more than 1 is possible with big XP pickups)."""
@@ -176,8 +192,6 @@ class Player:
             self.level += 1
             self.xp_to_next = int(self.xp_to_next * 1.18 + 18)
             gained += 1
-        if gained:
-            self._ac_xp = True
         return gained
 
     def apply_upgrade(self, up_id: str):
@@ -213,6 +227,7 @@ class Player:
         self.lifesteal_charge = max(0.0, self.lifesteal_charge - whole)
         room = max(0, int(self.max_hp - self.hp))
         healed = min(whole, room)
+        self._grant_heal(healed)
         self.hp = min(self.max_hp, self.hp + healed)
         if healed < whole:
             # No hoarding a banked burst heal while already topped up.
@@ -237,6 +252,8 @@ class Player:
                 self.max_hp = max(1, self.max_hp + gained)
                 self.hp = clamp(min(self.hp + gained, self.max_hp), 1.0, self.max_hp)
             elif key == "heal":
+                gain = max(0, min(self.max_hp, self.hp + int(value)) - self.hp)
+                self._grant_heal(gain)
                 self.hp = min(self.max_hp, self.hp + int(value))
             elif key == "lifesteal":
                 self.lifesteal_frac += value

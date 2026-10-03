@@ -39,7 +39,7 @@ from tankgame.entities.drone import Drone
 from tankgame.entities.meteor import Meteor
 from tankgame.art.tank_art import draw_tank
 from tankgame.ui.widgets import Button, TabButton
-from tankgame.game.anticheat import AntiCheat, run_guard, run_tick
+from tankgame.game.anticheat import AntiCheat, run_guard, run_tick, run_preflight, run_prereap
 
 
 
@@ -484,7 +484,7 @@ class AppMixin:
                                         f"+{survived.coin_bonus} COINS (BANKED)", C_COIN, life=1.0)
 
                 self.wave += 1
-                self._ac_wave = True
+                self._ac_wave_steps = getattr(self, "_ac_wave_steps", 0) + 1
                 self.wave_timer = self.wave_time
                 self.update_challenges("waves", 1)
                 self.update_challenges("high_wave", self.wave, absolute=True)
@@ -573,6 +573,9 @@ class AppMixin:
         self.pickups = [p for p in self.pickups if not self._handle_pickup_collect(p)]
         self._compact_xp_orbs()
 
+        # Rounds are speed-checked before they move: a swept round faster than any build can fire
+        # would otherwise hit everything on a map-long line before the end-of-frame check.
+        run_preflight(self._referee)
         for b in self.projectiles:
             b.update(dt)
         for b in self.enemy_projectiles:
@@ -615,6 +618,9 @@ class AppMixin:
         self.projectiles = self._cull_projectiles(self.projectiles)
         self.enemy_projectiles = self._cull_projectiles(self.enemy_projectiles)
 
+        # Kill provenance: no enemy may die (and pay out score/XP/drops) unless recorded damage
+        # accounts for the HP it lost.
+        run_prereap(self._referee)
         alive = []
         for e in self.enemies:
             if e.alive():
@@ -623,8 +629,7 @@ class AppMixin:
                 if isinstance(e, Boss):
                     self.on_boss_killed(e)
                 else:
-                    self.player.score += e.score_value
-                    self.player._ac_score = True
+                    self.player._grant_score(e.score_value)
                     self.run_stats["kills"] += 1
                     if e.last_hit_by_player and e.last_hit_weapon_id:
                         self.update_mastery(e.last_hit_weapon_id, kills=1)

@@ -48,6 +48,10 @@ class EnemyBase:
         # Hypnosis: while charmed the enemy is a temporary ally and ignores the player.
         self.charm_timer = 0.0
         self.charm_hit_cd = 0.0
+        # Every point of HP this enemy loses is recorded here by the engine's own damage paths
+        # (take_damage, burn, scorched ground). The referee checks hp == hp_max - recorded damage,
+        # so an HP that drops without a recorded hit (a poke) is restored before it can pay out.
+        self._ac_dmg = 0.0
 
     def speed_mult(self) -> float:
         return (1.0 - self.slow_frac) if self.slow_timer > 0.0 else 1.0
@@ -80,6 +84,7 @@ class EnemyBase:
         if self.burn_timer > 0.0:
             self.burn_timer = max(0.0, self.burn_timer - dt)
             self.hp -= self.burn_dps * dt
+            self._ac_dmg += self.burn_dps * dt
             game.credit_burn_damage(self.burn_dps * dt)
         if self.charm_timer > 0.0:
             self.charm_timer = max(0.0, self.charm_timer - dt)
@@ -103,6 +108,7 @@ class EnemyBase:
 
     def take_damage(self, dmg: int, knock_dir: Vector2, knockback: float, weapon_id: Optional[str] = None, from_player: bool = False):
         self.hp -= dmg
+        self._ac_dmg += dmg
         self.vel += knock_dir * (knockback / max(1.0, self.radius))
         self.hit_flash = 0.12
         if from_player:

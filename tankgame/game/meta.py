@@ -110,7 +110,7 @@ class MetaMixin:
             return
         if self.save.coins < cosmetic.cost:
             return
-        self.anticheat.note_save()
+        self.anticheat.note_save(coins=-cosmetic.cost, cosmetics=(cosmetic.id,))
         self.save.coins -= cosmetic.cost
         self.save.cosmetics_unlocked[cosmetic.id] = True
         self.save.cosmetics_equipped[cosmetic.category] = cosmetic.id
@@ -128,7 +128,7 @@ class MetaMixin:
         default_id = DEFAULT_COSMETICS.get(category)
         if not default_id:
             return
-        self.anticheat.note_save()
+        self.anticheat.note_save(cosmetics=(default_id,))
         self.save.cosmetics_equipped[category] = default_id
         self.save.cosmetics_unlocked[default_id] = True
         self.save.save()
@@ -218,9 +218,14 @@ class MetaMixin:
         cost = self.bundle_price(bundle)
         if cost <= 0 or self.save.coins < cost:
             return
-        self.anticheat.note_save()
-        self.save.coins -= cost
         weapons, meta, cosmetics = self.resolve_bundle_items(bundle)
+        levels = {}
+        for mid in meta:
+            item = SHOP_ITEMS_BY_ID.get(mid)
+            if item:
+                levels[mid] = min(item.max_level, int(self.save.shop_levels.get(mid, 0)) + 1)
+        self.anticheat.note_save(coins=-cost, weapons=weapons, cosmetics=cosmetics, levels=levels)
+        self.save.coins -= cost
         for wid in weapons:
             self.save.weapon_unlocks[wid] = True
         for mid in meta:
@@ -330,7 +335,7 @@ class MetaMixin:
                 if not item.get("claimed") and item["progress"] >= int(item.get("target", 0)):
                     item["claimed"] = True
                     reward = int(item.get("reward", 0))
-                    self.anticheat.note_save()
+                    self.anticheat.note_save(coins=reward)
                     self.save.coins += reward
                     self.add_float_text(self.player.pos + Vector2(0, -34), f"+{reward} COINS", C_COIN, life=1.0)
                 changed = True
@@ -417,7 +422,13 @@ class MetaMixin:
         if not self.can_buy(item):
             return
         cost = self.shop_cost(item)
-        self.anticheat.note_save()
+        if item.kind == "weapon":
+            self.anticheat.note_save(coins=-cost, weapons=(item.weapon_id,))
+        elif item.kind == "map":
+            self.anticheat.note_save(coins=-cost, maps=(item.weapon_id,))
+        else:
+            self.anticheat.note_save(coins=-cost,
+                                     levels={item.id: int(self.save.shop_levels.get(item.id, 0)) + 1})
         self.save.coins -= cost
 
         if item.kind == "weapon":
@@ -454,7 +465,7 @@ class MetaMixin:
         self.audio_play("buy")
 
     def reset_cosmetics(self):
-        self.anticheat.note_save()
+        self.anticheat.note_save(cosmetics=tuple(DEFAULT_COSMETICS.values()))
         self.save.cosmetics_equipped = dict(DEFAULT_COSMETICS)
         for cid in DEFAULT_COSMETICS.values():
             self.save.cosmetics_unlocked[cid] = True
@@ -488,7 +499,7 @@ class MetaMixin:
         coins_earned = (self.player.score // COINS_SCORE_DIV) + (waves_cleared * COINS_PER_WAVE) + int(self.run_bonus_coins)
         coins_earned = max(0, int(coins_earned))
         self.last_run_coins_earned = coins_earned
-        self.anticheat.note_save()
+        self.anticheat.note_save(coins=coins_earned)
         self.save.coins += coins_earned
         self.save.save()
         self.coins_awarded_this_gameover = True
